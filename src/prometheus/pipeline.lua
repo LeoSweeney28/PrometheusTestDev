@@ -37,18 +37,22 @@ local Pipeline = {
 	}
 }
 
+local MAX_RNG_SEED = 2147483646;
+local LCG_MULTIPLIER = 214013;
+local LCG_INCREMENT = 2531011;
+local URANDOM_BYTE_COUNT = 24;
+
 local function normalizeSeed(seed)
 	seed = math.floor(math.abs(seed or 0));
-	if _VERSION == "Lua 5.1" and not jit then
-		seed = seed % 9.007199254741e+15;
-	end
+	seed = seed % MAX_RNG_SEED;
 	return seed;
 end
 
 local function mixSeed(seed, value)
 	seed = normalizeSeed(seed);
 	value = normalizeSeed(value);
-	return normalizeSeed((seed * 214013 + 2531011 + value) % 9.007199254741e+15);
+	-- Mix values using a small LCG transition to diffuse entropy sources.
+	return normalizeSeed((seed * LCG_MULTIPLIER + LCG_INCREMENT + value) % MAX_RNG_SEED);
 end
 
 local function generateAutomaticSeed()
@@ -56,7 +60,7 @@ local function generateAutomaticSeed()
 
 	local urandom = io.open("/dev/urandom", "rb");
 	if urandom then
-		local bytes = urandom:read(24);
+		local bytes = urandom:read(URANDOM_BYTE_COUNT);
 		urandom:close();
 		if type(bytes) == "string" then
 			for i = 1, #bytes do
@@ -210,9 +214,6 @@ function Pipeline:apply(code, filename)
 	else
 		math.randomseed(generateAutomaticSeed());
 	end
-	math.random();
-	math.random();
-	math.random();
 
 	logger:info("Parsing ...");
 	local parserStartTime = gettime();
