@@ -37,6 +37,7 @@ local Pipeline = {
 	}
 }
 
+-- Keep seeds in a stable 31-bit range for Lua 5.1's math.randomseed implementation.
 local MAX_RNG_SEED = 2147483646;
 local LCG_MULTIPLIER = 214013;
 local LCG_INCREMENT = 2531011;
@@ -64,7 +65,7 @@ local function generateAutomaticSeed()
 		urandom:close();
 		if type(bytes) == "string" then
 			for i = 1, #bytes do
-				seed = mixSeed(seed, bytes:byte(i) + i);
+				seed = mixSeed(seed, bytes:byte(i));
 			end
 		end
 	end
