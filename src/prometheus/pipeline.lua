@@ -90,6 +90,7 @@ local function getFallbackSeed()
 	local seed = normalizeSeed(os.time());
 	seed = normalizeSeed(seed + math.floor(os.clock() * CLOCK_MICROSECOND_FACTOR));
 	seed = normalizeSeed(seed + math.floor((collectgarbage and collectgarbage("count") or 0) * GC_MILLI_FACTOR));
+	-- Weak entropy contribution only; used as a final mixer when stronger sources are missing.
 	local addressHint = tostring({});
 	for i = 1, #addressHint do
 		seed = normalizeSeed(seed + addressHint:byte(i));
@@ -105,8 +106,13 @@ local function generateAutomaticSeed()
 	if not seed then
 		local urandom = io.open("/dev/urandom", "rb");
 		if urandom then
-			local bytes = urandom:read(12);
-			urandom:close();
+			local okRead, bytes = pcall(function()
+				return urandom:read(12);
+			end);
+			pcall(function()
+				urandom:close();
+			end);
+			bytes = okRead and bytes or nil;
 			if type(bytes) == "string" and #bytes > 0 then
 				local hex = {};
 				for i = 1, #bytes do
