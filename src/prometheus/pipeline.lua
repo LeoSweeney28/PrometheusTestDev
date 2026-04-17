@@ -37,53 +37,81 @@ local Pipeline = {
 	}
 }
 
--- Keep seeds in a stable 31-bit range for Lua 5.1's math.randomseed implementation.
-local MAX_RNG_SEED = 2147483646;
-local LCG_MULTIPLIER = 214013;
-local LCG_INCREMENT = 2531011;
-local URANDOM_BYTE_COUNT = 24;
+local MAX_LUA51_SEED = 9.007199254741e+15;
+local CLOCK_MICROSECOND_FACTOR = 1000000;
+local GC_MILLI_FACTOR = 1000;
 
 local function normalizeSeed(seed)
 	seed = math.floor(math.abs(seed or 0));
-	seed = seed % MAX_RNG_SEED;
+	if _VERSION == "Lua 5.1" and not jit then
+		seed = seed % MAX_LUA51_SEED;
+	end
 	return seed;
 end
 
-local function mixSeed(seed, value)
-	seed = normalizeSeed(seed);
-	value = normalizeSeed(value);
-	-- Mix values using a small LCG transition to diffuse entropy sources.
-	return normalizeSeed((seed * LCG_MULTIPLIER + LCG_INCREMENT + value) % MAX_RNG_SEED);
+local function parseHexSeed(seedStr)
+	local seedNum = 0;
+	for i = 1, #seedStr do
+		local char = seedStr:sub(i, i):lower();
+		local digit = char:match("%d") and (char:byte() - 48) or (char:match("[a-f]") and (char:byte() - 87) or nil);
+		if not digit then
+			return nil;
+		end
+		seedNum = seedNum * 16 + digit;
+	end
+	return normalizeSeed(seedNum);
+end
+
+local function getOpenSSLSeed()
+	local process = io.popen("openssl rand -hex 12");
+	if not process then
+		return nil;
+	end
+	local seedStr = (process:read("*a") or ""):gsub("%s+", "");
+	process:close();
+	if #seedStr == 0 then
+		return nil;
+	end
+	return parseHexSeed(seedStr);
+end
+
+local function getFallbackSeed()
+	local seed = normalizeSeed(os.time());
+	seed = normalizeSeed(seed + math.floor(os.clock() * CLOCK_MICROSECOND_FACTOR));
+	seed = normalizeSeed(seed + math.floor((collectgarbage and collectgarbage("count") or 0) * GC_MILLI_FACTOR));
+	local addressHint = tostring({});
+	for i = 1, #addressHint do
+		seed = normalizeSeed(seed + addressHint:byte(i));
+	end
+	if seed == 0 then
+		seed = 1;
+	end
+	return seed;
 end
 
 local function generateAutomaticSeed()
-	local seed = 0;
-
-	local urandom = io.open("/dev/urandom", "rb");
-	if urandom then
-		local bytes = urandom:read(URANDOM_BYTE_COUNT);
-		urandom:close();
-		if type(bytes) == "string" then
-			for i = 1, #bytes do
-				seed = mixSeed(seed, bytes:byte(i));
+	local seed = getOpenSSLSeed();
+	if not seed then
+		local urandom = io.open("/dev/urandom", "rb");
+		if urandom then
+			local bytes = urandom:read(12);
+			urandom:close();
+			if type(bytes) == "string" and #bytes > 0 then
+				local hex = {};
+				for i = 1, #bytes do
+					hex[i] = string.format("%02x", bytes:byte(i));
+				end
+				seed = parseHexSeed(table.concat(hex));
 			end
 		end
 	end
 
-	seed = mixSeed(seed, os.time());
-	seed = mixSeed(seed, math.floor(os.clock() * 1000000));
-	seed = mixSeed(seed, math.floor((collectgarbage and collectgarbage("count") or 0) * 1000));
-
-	local addressHint = tostring({});
-	for i = 1, #addressHint do
-		seed = mixSeed(seed, addressHint:byte(i));
+	if not seed then
+		logger:warn("OpenSSL and /dev/urandom are unavailable. Falling back to local entropy sources.");
+		seed = getFallbackSeed();
 	end
 
-	if seed == 0 then
-		seed = 1;
-	end
-
-	return seed;
+	return normalizeSeed(seed);
 end
 
 
