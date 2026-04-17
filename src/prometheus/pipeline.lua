@@ -53,7 +53,12 @@ local function parseHexSeed(seedStr)
 	local seedNum = 0;
 	for i = 1, #seedStr do
 		local char = seedStr:sub(i, i):lower();
-		local digit = char:match("%d") and (char:byte() - 48) or (char:match("[a-f]") and (char:byte() - 87) or nil);
+		local digit = nil;
+		if char:match("%d") then
+			digit = char:byte() - 48;
+		elseif char:match("[a-f]") then
+			digit = char:byte() - 87;
+		end
 		if not digit then
 			return nil;
 		end
@@ -67,8 +72,14 @@ local function getOpenSSLSeed()
 	if not process then
 		return nil;
 	end
-	local seedStr = (process:read("*a") or ""):gsub("%s+", "");
-	process:close();
+	local okRead, seedStr = pcall(function()
+		return process:read("*a");
+	end);
+	pcall(function()
+		process:close();
+	end);
+	seedStr = okRead and seedStr or "";
+	seedStr = seedStr:gsub("%s+", "");
 	if #seedStr == 0 then
 		return nil;
 	end
