@@ -37,6 +37,100 @@ local Pipeline = {
 	}
 }
 
+local MAX_LUA51_SEED = 9.007199254741e+15;
+local CLOCK_MICROSECOND_FACTOR = 1000000;
+local GC_MILLI_FACTOR = 1000;
+
+local function normalizeSeed(seed)
+	seed = math.floor(math.abs(seed or 0));
+	if _VERSION == "Lua 5.1" and not jit then
+		seed = seed % MAX_LUA51_SEED;
+	end
+	return seed;
+end
+
+local function parseHexSeed(seedStr)
+	local seedNum = 0;
+	for i = 1, #seedStr do
+		local char = seedStr:sub(i, i):lower();
+		local digit = nil;
+		if char:match("%d") then
+			digit = char:byte() - 48;
+		elseif char:match("[a-f]") then
+			digit = char:byte() - 87;
+		end
+		if not digit then
+			return nil;
+		end
+		seedNum = seedNum * 16 + digit;
+	end
+	return normalizeSeed(seedNum);
+end
+
+local function getOpenSSLSeed()
+	local process = io.popen("openssl rand -hex 12");
+	if not process then
+		return nil;
+	end
+	local okRead, seedStr = pcall(function()
+		return process:read("*a");
+	end);
+	pcall(function()
+		process:close();
+	end);
+	seedStr = okRead and seedStr or "";
+	seedStr = seedStr:gsub("%s+", "");
+	if #seedStr == 0 then
+		return nil;
+	end
+	return parseHexSeed(seedStr);
+end
+
+local function getFallbackSeed()
+	local seed = normalizeSeed(os.time());
+	seed = normalizeSeed(seed + math.floor(os.clock() * CLOCK_MICROSECOND_FACTOR));
+	seed = normalizeSeed(seed + math.floor((collectgarbage and collectgarbage("count") or 0) * GC_MILLI_FACTOR));
+	-- Weak entropy contribution only; used as a final mixer when stronger sources are missing.
+	local addressHint = tostring({});
+	for i = 1, #addressHint do
+		seed = normalizeSeed(seed + addressHint:byte(i));
+	end
+	if seed == 0 then
+		seed = 1;
+	end
+	return seed;
+end
+
+local function generateAutomaticSeed()
+	local seed = getOpenSSLSeed();
+	if not seed then
+		local urandom = io.open("/dev/urandom", "rb");
+		if urandom then
+			local okRead, bytes = pcall(function()
+				return urandom:read(12);
+			end);
+			pcall(function()
+				urandom:close();
+			end);
+			bytes = okRead and bytes or nil;
+			if type(bytes) == "string" and #bytes > 0 then
+				local hex = {};
+				for i = 1, #bytes do
+					hex[i] = string.format("%02x", bytes:byte(i));
+				end
+				seed = parseHexSeed(table.concat(hex));
+			end
+		end
+	end
+
+	if not seed then
+		logger:warn("OpenSSL and /dev/urandom are unavailable. Falling back to local entropy sources.");
+		seed = getFallbackSeed();
+	end
+
+	return normalizeSeed(seed);
+end
+
 
 function Pipeline:new(settings)
 	local luaVersion = settings.luaVersion or settings.LuaVersion or Pipeline.DefaultSettings.LuaVersion;
@@ -162,34 +256,9 @@ function Pipeline:apply(code, filename)
 
 	-- Seed the Random Generator
 	if(self.Seed > 0) then
-		math.randomseed(self.Seed);
+		math.randomseed(normalizeSeed(self.Seed));
 	else
-		--> use secure random number generator
-		local success, seed = pcall(function()
-			local seedStr =  io.popen("openssl rand -hex 12"):read("*a"):gsub("\n", "")..""
-			local seedNum = 0;
-
-			--> NOTE: tonumber caps at 1.844674407371e+19. So we use this instead.
-			for i = 1, #seedStr do
-				local char = seedStr:sub(i, i):lower()
-				local digit = char:match("%d") and (char:byte() - 48) or (char:byte() - 87)
-				seedNum = seedNum * 16 + digit
-			end
-
-			--> Random Number Generator in Lua 5.1 is limited to 9.007199254741e+15.
-			if _VERSION == "Lua 5.1" and not jit then
-				seedNum = seedNum % 9.007199254741e+15
-			end
-
-			return seedNum
-		end)
-
-		if success then
-			math.randomseed(seed)
-		else
-			logger:warn("OpenSSL is unavailable. Falling back to unix time.");
-			math.randomseed(os.time())
-		end
+		math.randomseed(generateAutomaticSeed());
 	end
 
 	logger:info("Parsing ...");
