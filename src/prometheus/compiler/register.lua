@@ -217,12 +217,43 @@ return function(Compiler)
     end
 
     function Compiler:blockIdExpression(scope, id)
-        if self.enableControlFlowBytecode and self.blockIdSlots and self.blockIdSlots[id] and self.blockIdBytecodeVar then
-            scope:addReferenceToHigherScope(self.scope, self.blockIdBytecodeVar);
-            local slotExpr = Ast.IndexExpression(
-                Ast.VariableExpression(self.scope, self.blockIdBytecodeVar),
-                Ast.NumberExpression(self.blockIdSlots[id])
-            );
+        local entry = self.blockControlFlowEntryById and self.blockControlFlowEntryById[id];
+        if self.enableControlFlowBytecode and entry and self.blockIdBytecodeVar then
+            local slotIndexExpr = Ast.NumberExpression(entry.lookupSlot or entry.aliasSlot or entry.slot);
+            local payloadIndexExpr = slotIndexExpr;
+            if self.enableControlFlowIndexIndirection and self.blockIdIndexVar then
+                scope:addReferenceToHigherScope(self.scope, self.blockIdIndexVar);
+                local fallbackPayloadSlot = entry.payloadSlot or entry.slot or 1;
+                if self.enableControlFlowBlobStorage then
+                    fallbackPayloadSlot = entry.slot or 1;
+                end
+                local maskedPayloadFallback = Ast.NumberExpression(fallbackPayloadSlot + (self.controlFlowIndexMask or 0));
+                payloadIndexExpr = Ast.SubExpression(
+                    Ast.OrExpression(
+                        Ast.IndexExpression(
+                            Ast.VariableExpression(self.scope, self.blockIdIndexVar),
+                            slotIndexExpr
+                        ),
+                        maskedPayloadFallback
+                    ),
+                    Ast.NumberExpression(self.controlFlowIndexMask or 0)
+                );
+            end
+
+            local slotExpr;
+            if self.enableControlFlowBlobStorage and self.blockIdBlobDecodeVar then
+                scope:addReferenceToHigherScope(self.scope, self.blockIdBlobDecodeVar);
+                slotExpr = Ast.FunctionCallExpression(
+                    Ast.VariableExpression(self.scope, self.blockIdBlobDecodeVar),
+                    {payloadIndexExpr}
+                );
+            else
+                scope:addReferenceToHigherScope(self.scope, self.blockIdBytecodeVar);
+                slotExpr = Ast.IndexExpression(
+                    Ast.VariableExpression(self.scope, self.blockIdBytecodeVar),
+                    payloadIndexExpr
+                );
+            end
             return self:decodeControlFlowEntryExpression(slotExpr);
         end
         return Ast.NumberExpression(id);

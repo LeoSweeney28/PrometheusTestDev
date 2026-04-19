@@ -10,11 +10,17 @@ local util = require("prometheus.util");
 local Parser = require("prometheus.parser");
 local Unparser = require("prometheus.unparser");
 local logger = require("logger");
+local Validator = require("prometheus.validator");
 
 local NameGenerators = require("prometheus.namegenerators");
 
 local Steps = require("prometheus.steps");
 local LuaVersion = Enums.LuaVersion;
+
+-- Performance modules (Overhaul #4)
+local Cache = require("prometheus.cache");
+local Profiler = require("prometheus.profiler");
+local Allocator = require("prometheus.allocator");
 
 -- On Windows, os.clock can be used. On other systems, os.time must be used for benchmarking.
 local isWindows = package and package.config and type(package.config) == "string" and package.config:sub(1,1) == "\\";
@@ -66,6 +72,13 @@ function Pipeline:new(settings)
 		namegenerator = Pipeline.NameGenerators.MangledShuffled;
 		conventions = conventions;
 		steps = {};
+		-- Performance optimization (Overhaul #4)
+		cache = Cache:new(settings.CacheSize or 1000);
+		profiler = Profiler:new();
+		validatorPool = nil; -- Lazy-init in apply()
+		enableCaching = settings.EnableCaching ~= false; -- Default true
+		enableProfiling = settings.EnableProfiling ~= false; -- Default true
+		enableValidatorPooling = settings.EnableValidatorPooling ~= false; -- Default true
 	}
 
 	setmetatable(pipeline, self);
@@ -161,6 +174,11 @@ function Pipeline:apply(code, filename)
 	filename = filename or "Anonymous Script";
 	logger:info(string.format("Applying Obfuscation Pipeline to %s ...", filename));
 
+	-- Initialize profiler section
+	if self.enableProfiling then
+		self.profiler:startSection("total");
+	end
+
 	-- Seed the Random Generator
 	if(self.Seed > 0) then
 		math.randomseed(self.Seed);
@@ -173,37 +191,128 @@ function Pipeline:apply(code, filename)
 		math.randomseed(seed);
 	end
 
+	-- Initialize validator pool (lazy initialization for Overhaul #4)
+	if self.enableValidatorPooling and not self.validatorPool then
+		self.validatorPool = Allocator:newPool(function()
+			return Validator:new();
+		end, 5);
+	end
+
+	-- Check cache for parsed AST (Overhaul #4)
+	local ast;
+	if self.enableCaching then
+		self.profiler:startSection("cache_lookup");
+		ast = self.cache:getAST(code);
+		self.profiler:endSection("cache_lookup");
+		if ast then
+			logger:info("AST cache hit - skipping parsing");
+			return self:_applyStepsAndGenerate(ast, code, filename, startTime);
+		end
+	end
+
 	logger:info("Parsing ...");
-	local parserStartTime = gettime();
+	if self.enableProfiling then
+		self.profiler:startSection("parsing");
+	end
 
 	local sourceLen = string.len(code);
-	local ast = self.parser:parse(code);
+	ast = self.parser:parse(code);
 
-	local parserTimeDiff = gettime() - parserStartTime;
-	logger:info(string.format("Parsing Done in %.2f seconds", parserTimeDiff));
+	if self.enableProfiling then
+		self.profiler:endSection("parsing");
+	end
 
+	-- Cache parsed AST (Overhaul #4)
+	if self.enableCaching then
+		self.cache:cacheAST(code, ast, filename);
+	end
+
+	-- Validate AST after parsing
+	local validator = self.enableValidatorPooling and Allocator:acquire(self.validatorPool) or Validator:new();
+	local errors, warnings = validator:validate(ast);
+	if self.enableValidatorPooling then
+		Allocator:release(self.validatorPool, validator);
+	end
+
+	if #errors > 0 then
+		for _, err in ipairs(errors) do
+			logger:warn(string.format("AST Validation Error: %s (%s)", err.message, err.context));
+		end
+	end
+	if #warnings > 0 then
+		for _, warn in ipairs(warnings) do
+			logger:debug(string.format("AST Validation Warning: %s (%s)", warn.message, warn.context));
+		end
+	end
+
+	return self:_applyStepsAndGenerate(ast, code, filename, startTime);
+end
+
+-- Helper method to apply steps and generate code (extracted for reuse in caching)
+function Pipeline:_applyStepsAndGenerate(ast, code, filename, startTime)
 	-- User Defined Steps
 	for i, step in ipairs(self.steps) do
 		local stepStartTime = gettime();
 		logger:info(string.format("Applying Step \"%s\" ...", step.Name or "Unnamed"));
+		
+		if self.enableProfiling then
+			self.profiler:startSection("step_" .. (step.Name or "unnamed"));
+		end
+
 		local newAst = step:apply(ast, self);
 		if type(newAst) == "table" then
 			ast = newAst;
 		end
+		
+		if self.enableProfiling then
+			self.profiler:endSection("step_" .. (step.Name or "unnamed"));
+		end
+
+		-- Validate AST after each step (using validator pool for Overhaul #4)
+		local stepValidator = self.enableValidatorPooling and Allocator:acquire(self.validatorPool) or Validator:new();
+		local stepErrors, stepWarnings = stepValidator:validate(ast);
+		if self.enableValidatorPooling then
+			Allocator:release(self.validatorPool, stepValidator);
+		end
+
+		if #stepErrors > 0 then
+			for _, err in ipairs(stepErrors) do
+				logger:warn(string.format("Post-%s Validation Error: %s (%s)", step.Name or "Unnamed", err.message, err.context));
+			end
+		end
+		
 		logger:info(string.format("Step \"%s\" Done in %.2f seconds", step.Name or "Unnamed", gettime() - stepStartTime));
 	end
 
 	-- Rename Variables Step
+	if self.enableProfiling then
+		self.profiler:startSection("rename_variables");
+	end
+
 	self:renameVariables(ast);
 
-	code = self:unparse(ast);
+	if self.enableProfiling then
+		self.profiler:endSection("rename_variables");
+	end
 
-	local timeDiff = gettime() - startTime;
+	-- Generate code
+	if self.enableProfiling then
+		self.profiler:startSection("code_generation");
+	end
+
+	local generatedCode = self:unparse(ast);
+
+	if self.enableProfiling then
+		self.profiler:endSection("code_generation");
+		self.profiler:endSection("total");
+	end
+
+	local timeDiff = gettime() - (startTime or gettime());
 	logger:info(string.format("Obfuscation Done in %.2f seconds", timeDiff));
 
-	logger:info(string.format("Generated Code size is %.2f%% of the Source Code size", (string.len(code) / sourceLen)*100))
+	logger:info(string.format("Generated Code size is %.2f%% of the Source Code size", (string.len(generatedCode) / string.len(code))*100))
 
-	return code;
+	return generatedCode;
 end
 
 function Pipeline:unparse(ast)
@@ -244,6 +353,55 @@ function Pipeline:renameVariables(ast)
 
 	local timeDiff = gettime() - startTime;
 	logger:info(string.format("Renaming Done in %.2f seconds", timeDiff));
+end
+
+-- Get cache statistics (Overhaul #4)
+function Pipeline:getCacheStats()
+	return self.cache:getStats();
+end
+
+-- Get profiling report (Overhaul #4)
+function Pipeline:getProfilingReport()
+	return self.profiler:getAllStats();
+end
+
+-- Print performance report (Overhaul #4)
+function Pipeline:printPerformanceReport()
+	logger:info("=== Performance Report (Overhaul #4) ===");
+	
+	-- Cache statistics
+	local cacheStats = self:getCacheStats();
+	logger:info(string.format("Cache Stats: Hits=%d, Misses=%d, Hit Rate=%.1f%%", 
+		cacheStats.hits, cacheStats.misses, cacheStats.hitRate));
+	logger:info(string.format("  AST Cache Size: %d, Compilation Cache Size: %d, Evictions: %d",
+		cacheStats.astCacheSize, cacheStats.compilationCacheSize, cacheStats.evictions));
+	
+	-- Profiling report
+	logger:info("Profiling Report:");
+	self.profiler:printReport();
+	
+	-- Validator pool statistics
+	if self.validatorPool then
+		local poolStats = Allocator:getPoolStats(self.validatorPool);
+		logger:info(string.format("Validator Pool: Available=%d, InUse=%d, Created=%d, Reuse Rate=%.1f%%",
+			poolStats.available, poolStats.inUse, poolStats.created, poolStats.reuseRate));
+	end
+	
+	-- Memory statistics
+	local memReport = Allocator:getMemoryReport();
+	logger:info(string.format("Memory Pools - Tables: Available=%d, InUse=%d; StringBuilders: Available=%d, InUse=%d",
+		memReport.tablePool.available, memReport.tablePool.inUse,
+		memReport.stringBuilderPool.available, memReport.stringBuilderPool.inUse));
+end
+
+-- Clear caches and reset profiling (useful for batch operations)
+function Pipeline:resetPerformanceData()
+	self.cache:clear();
+	self.profiler = Profiler:new();
+	if self.validatorPool then
+		Allocator:resetPool(self.validatorPool);
+	end
+	logger:info("Performance data cleared");
 end
 
 return Pipeline;

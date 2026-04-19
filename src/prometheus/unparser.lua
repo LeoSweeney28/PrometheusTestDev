@@ -407,7 +407,15 @@ function Unparser:unparseExpression(expression, tabbing)
 	end
 
 	if(expression.kind == AstKind.NumberExpression) then
-		local str = tostring(expression.value);
+		local numericValue = expression.value;
+		if type(numericValue) ~= "number" then
+			numericValue = tonumber(numericValue);
+		end
+		if type(numericValue) ~= "number" then
+			-- Defensive fallback for malformed AST payloads to prevent hard failures.
+			numericValue = 0;
+		end
+		local str = tostring(numericValue);
 		if(str == "inf") then
 			return "2e1024"
 		end
@@ -439,7 +447,15 @@ function Unparser:unparseExpression(expression, tabbing)
 	local k = AstKind.OrExpression;
 	if(expression.kind == k) then
 		local lhs = self:unparseExpression(expression.lhs, tabbing);
+		if(Ast.astKindExpressionToNumber(expression.lhs.kind) >= Ast.astKindExpressionToNumber(k)) then
+			lhs = "(" .. lhs .. ")";
+		end
+
 		local rhs = self:unparseExpression(expression.rhs, tabbing);
+		if(Ast.astKindExpressionToNumber(expression.rhs.kind) >= Ast.astKindExpressionToNumber(k)) then
+			rhs = "(" .. rhs .. ")";
+		end
+
 		return lhs .. self:whitespaceIfNeeded2(lhs) .. "or" .. self:whitespaceIfNeeded(rhs) .. rhs;
 	end
 

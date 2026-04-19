@@ -16,7 +16,11 @@ return {
 	AddVararg = require("prometheus.steps.AddVararg"),
 	WatermarkCheck = require("prometheus.steps.WatermarkCheck"),
 	OpaquePredicates = require("prometheus.steps.OpaquePredicates"),
+	ControlFlow = require("prometheus.steps.ControlFlow"),
 	BooleanExpressionInversion = require("prometheus.steps.BooleanExpressionInversion"),
 	IndirectFunctionCalls = require("prometheus.steps.IndirectFunctionCalls"),
 	FunctionParameterShuffle = require("prometheus.steps.FunctionParameterShuffle"),
+	-- Advanced Obfuscation Techniques (Overhaul #5)
+	ExpressionComplexity = require("prometheus.steps.ExpressionComplexity"),
+	ControlFlowInversion = require("prometheus.steps.ControlFlowInversion"),
 }

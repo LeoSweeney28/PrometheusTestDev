@@ -20,7 +20,12 @@
 * [EncryptStrings](steps/encryptstrings.md)
 * [ConstantArray](steps/constantarray.md)
 * [AntiTamper](steps/anti-tamper.md)
+* [ControlFlow](steps/controlflow.md)
 
+## Optimizations
+
+* [Performance Overhaul (Overhaul #4)](steps/performance-overhaul.md)
+* [Advanced Obfuscation Techniques (Overhaul #5)](steps/advanced-obfuscation.md)
 
 ## advanced
 

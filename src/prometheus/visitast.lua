@@ -187,6 +187,10 @@ local binaryExpressions = lookupify{
 	AstKind.PowExpression,
 }
 function visitExpression(expression, previsit, postvisit, data)
+	if(expression == nil) then
+		return expression;
+	end
+
 	expression.isExpression = true;
 	if(type(previsit) == "function") then
 		local node, skip = previsit(expression, data);
@@ -238,8 +242,16 @@ function visitExpression(expression, previsit, postvisit, data)
 	end
 	if(expression.kind == AstKind.IfElseExpression) then
 		expression.condition = visitExpression(expression.condition, previsit, postvisit, data);
-		expression.true_expr = visitExpression(expression.true_expr, previsit, postvisit, data);
-		expression.false_expr = visitExpression(expression.false_expr, previsit, postvisit, data);
+		if(expression.true_expr ~= nil) then
+			expression.true_expr = visitExpression(expression.true_expr, previsit, postvisit, data);
+		elseif(expression.true_value ~= nil) then
+			expression.true_value = visitExpression(expression.true_value, previsit, postvisit, data);
+		end
+		if(expression.false_expr ~= nil) then
+			expression.false_expr = visitExpression(expression.false_expr, previsit, postvisit, data);
+		elseif(expression.false_value ~= nil) then
+			expression.false_value = visitExpression(expression.false_value, previsit, postvisit, data);
+		end
 	end
 
 	if(type(postvisit) == "function") then

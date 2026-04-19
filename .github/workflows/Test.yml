@@ -17,3 +17,29 @@ jobs:
           luaVersion: 5.1
       - name: Run test case
         run: lua ./tests.lua --Linux --CI
+
+  vm-runtime-regression:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [Vmify, VMHard]
+        target: [benchmark.lua, tests/multi-return.lua]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@master
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@master
+        with:
+          luaVersion: 5.1
+      - name: Obfuscate target
+        run: |
+          base_name="$(basename "${{ matrix.target }}" .lua)"
+          out_file="./ci.${base_name}.${{ matrix.preset }}.obfuscated.lua"
+          lua ./cli.lua --preset "${{ matrix.preset }}" --out "$out_file" "./${{ matrix.target }}"
+          echo "OUT_FILE=$out_file" >> "$GITHUB_ENV"
+      - name: Validate obfuscated runtime output
+        run: |
+          lua "./${{ matrix.target }}" > ./expected.out
+          lua "$OUT_FILE" > ./actual.out
+          diff -u ./expected.out ./actual.out

@@ -18,25 +18,42 @@ package.path = script_path() .. "?.lua;" .. package.path;
 if not pcall(function()
     return math.random(1, 2^40);
 end) then
-    local oldMathRandom = math.random;
-    math.random = function(a, b)
+    if not _G.__prometheus_random_state then
+        local seed = math.floor(os.time() + (os.clock() * 1000000));
+        _G.__prometheus_random_state = seed % 2147483647;
+        if _G.__prometheus_random_state <= 0 then
+            _G.__prometheus_random_state = 1;
+        end
+    end
+
+    local function nextRandomValue()
+        _G.__prometheus_random_state = (_G.__prometheus_random_state * 1103515245 + 12345) % 2147483647;
+        return _G.__prometheus_random_state;
+    end
+
+    rawset(math, "randomseed", function(seed)
+        if seed == nil then
+            seed = math.floor(os.time() + (os.clock() * 1000000));
+        end
+        _G.__prometheus_random_state = tonumber(seed) % 2147483647;
+        if _G.__prometheus_random_state <= 0 then
+            _G.__prometheus_random_state = 1;
+        end
+    end)
+
+    rawset(math, "random", function(a, b)
+        local value = nextRandomValue();
         if a == nil and b == nil then
-            return oldMathRandom();
+            return value / 2147483647;
         end
         if b == nil then
-            return math.random(1, a);
+            return (value % a) + 1;
         end
         if a > b then
             a, b = b, a;
         end
-        local diff = b - a;
-        assert(diff >= 0);
-        if diff > 2 ^ 31 - 1 then
-            return math.floor(oldMathRandom() * diff + a);
-        else
-            return oldMathRandom(a, b);
-        end
-    end
+        return a + (value % (b - a + 1));
+    end)
 end
 
 -- newproxy polyfill
@@ -56,6 +73,22 @@ local Logger = require("logger");
 local Presets = require("presets");
 local Config = require("config");
 local util = require("prometheus.util");
+local SafeEnv = require("prometheus.SafeEnv");
+local Validator = require("prometheus.validator");
+local StepUtils = require("prometheus.StepUtils");
+local AstBuilder = require("prometheus.AstBuilder");
+local StepRegistry = require("prometheus.StepRegistry");
+local Cache = require("prometheus.cache");
+local Lazy = require("prometheus.lazy");
+local Allocator = require("prometheus.allocator");
+local StreamingGenerator = require("prometheus.streaming");
+local Profiler = require("prometheus.profiler");
+-- Advanced Obfuscation Techniques (Overhaul #5)
+local Polymorphic = require("prometheus.polymorphic");
+local Complexity = require("prometheus.complexity");
+
+-- Initialize built-in steps in registry
+StepRegistry:registerBuiltins();
 
 -- Restore package.path
 package.path = oldPkgPath;
@@ -68,5 +101,18 @@ return {
     Logger = Logger;
     highlight = highlight;
     Presets = Presets;
+    SafeEnv = SafeEnv;
+    Validator = Validator;
+    StepUtils = StepUtils;
+    AstBuilder = AstBuilder;
+    StepRegistry = StepRegistry;
+    Cache = Cache;
+    Lazy = Lazy;
+    Allocator = Allocator;
+    StreamingGenerator = StreamingGenerator;
+    Profiler = Profiler;
+    -- Advanced Obfuscation (Overhaul #5)
+    Polymorphic = Polymorphic;
+    Complexity = Complexity;
 }
 

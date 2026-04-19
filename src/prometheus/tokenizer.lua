@@ -400,7 +400,11 @@ function Tokenizer:singleLineString()
 					numstr = numstr .. char;
 				end
 
-				char = string.char(tonumber(numstr));
+				local num = tonumber(numstr, 10);
+				if(not num or num < 0 or num > 255) then
+					logger:error(generateError(self, string.format("Invalid numeric escape sequence \\%s", numstr)));
+				end
+				char = string.char(num);
 
 			elseif(self.UnicodeEscapes and char == "u") then
 				expect(self, "{");
@@ -409,6 +413,9 @@ function Tokenizer:singleLineString()
 					num = num .. get(self);
 				end
 				expect(self, "}");
+				if(#num == 0) then
+					logger:error(generateError(self, "Invalid unicode escape sequence \\u{}"));
+				end
 				char = util.utf8char(tonumber(num, 16));
 			elseif(self.HexEscapes and char == "x") then
 				local hex = expect(self, self.HexNumberCharsLookup) .. expect(self, self.HexNumberCharsLookup);
