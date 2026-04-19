@@ -45,7 +45,7 @@ return function(self, statement, funcDepth)
     self:addStatement(self:setRegister(scope, currentReg, Ast.SubExpression(self:register(scope, initialReg), self:register(scope, incrementReg))), {currentReg}, {initialReg, incrementReg}, false);
     self:freeRegister(initialReg);
 
-    self:addStatement(self:jmp(scope, Ast.NumberExpression(checkBlock.id)), {self.POS_REGISTER}, {}, false);
+    self:addStatement(self:jmp(scope, self:blockIdExpression(scope, checkBlock.id)), {self.POS_REGISTER}, {}, false);
 
     self:setActiveBlock(checkBlock);
 
@@ -73,11 +73,13 @@ return function(self, statement, funcDepth)
     self:addStatement(self:setRegister(scope, tmpReg2, Ast.AndExpression(self:register(scope, incrementIsNegReg), self:register(scope, tmpReg2))), {tmpReg2}, {tmpReg2, incrementIsNegReg}, false);
     self:addStatement(self:setRegister(scope, tmpReg1, Ast.OrExpression(self:register(scope, tmpReg2), self:register(scope, tmpReg1))), {tmpReg1}, {tmpReg1, tmpReg2}, false);
     self:freeRegister(tmpReg2);
-    tmpReg2 = self:compileExpression(Ast.NumberExpression(innerBlock.id), funcDepth, 1)[1];
+    tmpReg2 = self:allocRegister(false);
+    self:addStatement(self:setRegister(scope, tmpReg2, self:blockIdExpression(scope, innerBlock.id)), {tmpReg2}, {}, false);
     self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.AndExpression(self:register(scope, tmpReg1), self:register(scope, tmpReg2))), {self.POS_REGISTER}, {tmpReg1, tmpReg2}, false);
     self:freeRegister(tmpReg2);
     self:freeRegister(tmpReg1);
-    tmpReg2 = self:compileExpression(Ast.NumberExpression(finalBlock.id), funcDepth, 1)[1];
+    tmpReg2 = self:allocRegister(false);
+    self:addStatement(self:setRegister(scope, tmpReg2, self:blockIdExpression(scope, finalBlock.id)), {tmpReg2}, {}, false);
     self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(self:register(scope, self.POS_REGISTER), self:register(scope, tmpReg2))), {self.POS_REGISTER}, {self.POS_REGISTER, tmpReg2}, false);
     self:freeRegister(tmpReg2);
 
@@ -97,7 +99,7 @@ return function(self, statement, funcDepth)
 
 
     self:compileBlock(statement.body, funcDepth);
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.NumberExpression(checkBlock.id)), {self.POS_REGISTER}, {}, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, self:blockIdExpression(scope, checkBlock.id)), {self.POS_REGISTER}, {}, false);
 
     self.registers[self.POS_REGISTER] = self.VAR_REGISTER;
     self:freeRegister(finalReg);

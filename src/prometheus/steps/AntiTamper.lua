@@ -20,6 +20,18 @@ AntiTamper.SettingsDescriptor = {
 		default = true,
 		description = "Use debug library. (Recommended, however scripts will not work without debug library.)",
 	},
+    MaxIntegrityChecks = {
+        type = "number",
+        default = 65,
+        min = 16,
+        max = 256,
+        description = "Maximum number of randomized integrity checks.",
+    },
+    RandomizeErrorMessage = {
+        type = "boolean",
+        default = true,
+        description = "Randomize tamper error message to reduce signature detection.",
+    },
 }
 
 local function generateSanityCheck()
@@ -87,6 +99,8 @@ function AntiTamper:apply(ast, pipeline)
 		return ast
 	end
 	local code = generateSanityCheck()
+    local maxIntegrityChecks = math.max(16, math.floor(self.MaxIntegrityChecks or 65))
+    local errMessage = self.RandomizeErrorMessage and RandomStrings.randomString() or "Tamper Detected!"
 	if self.UseDebug then
 		local string = RandomStrings.randomString()
 		code = code
@@ -155,7 +169,7 @@ function AntiTamper:apply(ast, pipeline)
     end
     code = code .. [[
     local gmatch = string.gmatch;
-    local err = function() error("Tamper Detected!") end;
+    local err = function() error("]] .. errMessage .. [[") end;
 
     local pcallIntact2 = false;
     local pcallIntact = pcall(function()
@@ -165,7 +179,7 @@ function AntiTamper:apply(ast, pipeline)
     local random = math.random;
     local tblconcat = table.concat;
     local unpkg = table and table.unpack or unpack;
-    local n = random(3, 65);
+    local n = random(3, ]] .. tostring(maxIntegrityChecks) .. [[);
     local acc1 = 0;
     local acc2 = 0;
     local pcallRet = {pcall(function() local a = ]] .. tostring(math.random(1, 2^24)) .. [[ - "]] .. RandomStrings.randomString() .. [[" ^ ]] .. tostring(math.random(1, 2^24)) .. [[ return "]] .. RandomStrings.randomString() .. [[" / a; end)};

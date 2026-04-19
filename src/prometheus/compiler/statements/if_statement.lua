@@ -20,14 +20,14 @@ return function(self, statement, funcDepth)
     local innerBlock = self:createBlock();
 
 
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), Ast.NumberExpression(innerBlock.id)), Ast.NumberExpression(nextBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), self:blockIdExpression(scope, innerBlock.id)), self:blockIdExpression(scope, nextBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
 
     self:freeRegister(conditionReg, false);
 
     self:setActiveBlock(innerBlock);
     scope = innerBlock.scope
     self:compileBlock(statement.body, funcDepth);
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.NumberExpression(finalBlock.id)), {self.POS_REGISTER}, {}, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, self:blockIdExpression(scope, finalBlock.id)), {self.POS_REGISTER}, {}, false);
 
     for i, eif in ipairs(statement.elseifs) do
         self:setActiveBlock(nextBlock);
@@ -40,7 +40,7 @@ return function(self, statement, funcDepth)
         end
         local scope = self.activeBlock.scope;
 
-        self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), Ast.NumberExpression(innerBlock.id)), Ast.NumberExpression(nextBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
+        self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), self:blockIdExpression(scope, innerBlock.id)), self:blockIdExpression(scope, nextBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
 
 
         self:freeRegister(conditionReg, false);
@@ -48,13 +48,13 @@ return function(self, statement, funcDepth)
         self:setActiveBlock(innerBlock);
         scope = innerBlock.scope;
         self:compileBlock(eif.body, funcDepth);
-        self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.NumberExpression(finalBlock.id)), {self.POS_REGISTER}, {}, false);
+        self:addStatement(self:setRegister(scope, self.POS_REGISTER, self:blockIdExpression(scope, finalBlock.id)), {self.POS_REGISTER}, {}, false);
     end
 
     if statement.elsebody then
         self:setActiveBlock(nextBlock);
         self:compileBlock(statement.elsebody, funcDepth);
-        self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.NumberExpression(finalBlock.id)), {self.POS_REGISTER}, {}, false);
+        self:addStatement(self:setRegister(scope, self.POS_REGISTER, self:blockIdExpression(scope, finalBlock.id)), {self.POS_REGISTER}, {}, false);
     end
 
     self:setActiveBlock(finalBlock);

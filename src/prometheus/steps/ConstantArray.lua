@@ -91,6 +91,12 @@ ConstantArray.SettingsDescriptor = {
 			"base85",
 			"mixed",
 		},
+	},
+	LazyDecode = {
+		name = "LazyDecode",
+		description = "Decode encoded strings on first access instead of decoding the full array during initialization",
+		type = "boolean",
+		default = false,
 	}
 }
 
@@ -111,7 +117,20 @@ local function callNameGenerator(generatorFunction, ...)
 	return generatorFunction(...);
 end
 
-function ConstantArray:init(_) end
+function ConstantArray:init(settings)
+	settings = settings or {};
+
+	-- Backward/forward compatible aliases.
+	if settings.Threshold ~= nil then
+		self.Treshold = settings.Threshold;
+	end
+	if settings.LocalWrapperThreshold ~= nil then
+		self.LocalWrapperTreshold = settings.LocalWrapperThreshold;
+	end
+	if settings.localWrapperCount ~= nil then
+		self.LocalWrapperCount = settings.localWrapperCount;
+	end
+end
 
 function ConstantArray:createArray()
 	local entries = {};
@@ -514,6 +533,238 @@ function ConstantArray:addDecodeCode(ast)
 	end
 end
 
+function ConstantArray:createLazyDecodeHelper(ast)
+	if self.Encoding == "none" then
+		return;
+	end
+
+	local code;
+	if self.Encoding == "base64" then
+		code = string.format([=[
+local function DECODE(data)
+	if type(data) ~= "string" then
+		return data
+	end
+
+	local chars = %q
+	local len = #data
+	local out = {}
+	local i = 1
+	local value = 0
+	local count = 0
+
+	while i <= len do
+		local ch = data:sub(i, i)
+		local code = chars:find(ch, 1, true)
+		if code then
+			value = value + (code - 1) * (64 ^ (3 - count))
+			count = count + 1
+			if count == 4 then
+				count = 0
+				out[#out + 1] = string.char(
+					math.floor(value / 65536),
+					math.floor(value %% 65536 / 256),
+					value %% 256
+				)
+				value = 0
+			end
+		elseif ch == "=" then
+			out[#out + 1] = string.char(math.floor(value / 65536))
+			if i >= len or data:sub(i + 1, i + 1) ~= "=" then
+				out[#out + 1] = string.char(math.floor(value %% 65536 / 256))
+			end
+			break
+		end
+		i = i + 1
+	end
+
+	return table.concat(out)
+end
+]=], self.base64chars);
+	elseif self.Encoding == "base85" then
+		code = string.format([=[
+local function DECODE(data)
+	if type(data) ~= "string" then
+		return data
+	end
+
+	local chars = %q
+	local len = #data
+	local out = {}
+	local i = 1
+
+	while i <= len do
+		local remain = len - i + 1
+		local count = remain >= 5 and 5 or remain
+		local value = 0
+		local valid = count > 1
+
+		for j = 0, 4 do
+			local code
+			if j < count then
+				local ch = data:sub(i + j, i + j)
+				code = chars:find(ch, 1, true)
+				if not code then
+					valid = false
+					break
+				end
+				code = code - 1
+			else
+				code = 84
+			end
+			value = value * 85 + code
+		end
+
+		if valid then
+			local b1 = math.floor(value / 16777216) %% 256
+			local b2 = math.floor(value / 65536) %% 256
+			local b3 = math.floor(value / 256) %% 256
+			local b4 = value %% 256
+			if count == 5 then
+				out[#out + 1] = string.char(b1, b2, b3, b4)
+			elseif count == 4 then
+				out[#out + 1] = string.char(b1, b2, b3)
+			elseif count == 3 then
+				out[#out + 1] = string.char(b1, b2)
+			elseif count == 2 then
+				out[#out + 1] = string.char(b1)
+			end
+		end
+
+		i = i + count
+	end
+
+	return table.concat(out)
+end
+]=], self.base85chars);
+	elseif self.Encoding == "mixed" then
+		code = string.format([=[
+local function DECODE(data)
+	if type(data) ~= "string" then
+		return data
+	end
+
+	local prefix64 = %q
+	local prefix85 = %q
+	local first = data:sub(1, 1)
+
+	if first == prefix64 then
+		local chars = %q
+		data = data:sub(2)
+		local len = #data
+		local out = {}
+		local i = 1
+		local value = 0
+		local count = 0
+
+		while i <= len do
+			local ch = data:sub(i, i)
+			local code = chars:find(ch, 1, true)
+			if code then
+				value = value + (code - 1) * (64 ^ (3 - count))
+				count = count + 1
+				if count == 4 then
+					count = 0
+					out[#out + 1] = string.char(
+						math.floor(value / 65536),
+						math.floor(value %% 65536 / 256),
+						value %% 256
+					)
+					value = 0
+				end
+			elseif ch == "=" then
+				out[#out + 1] = string.char(math.floor(value / 65536))
+				if i >= len or data:sub(i + 1, i + 1) ~= "=" then
+					out[#out + 1] = string.char(math.floor(value %% 65536 / 256))
+				end
+				break
+			end
+			i = i + 1
+		end
+
+		return table.concat(out)
+	elseif first == prefix85 then
+		local chars = %q
+		data = data:sub(2)
+		local len = #data
+		local out = {}
+		local i = 1
+
+		while i <= len do
+			local remain = len - i + 1
+			local count = remain >= 5 and 5 or remain
+			local value = 0
+			local valid = count > 1
+
+			for j = 0, 4 do
+				local code
+				if j < count then
+					local ch = data:sub(i + j, i + j)
+					code = chars:find(ch, 1, true)
+					if not code then
+						valid = false
+						break
+					end
+					code = code - 1
+				else
+					code = 84
+				end
+				value = value * 85 + code
+			end
+
+			if valid then
+				local b1 = math.floor(value / 16777216) %% 256
+				local b2 = math.floor(value / 65536) %% 256
+				local b3 = math.floor(value / 256) %% 256
+				local b4 = value %% 256
+				if count == 5 then
+					out[#out + 1] = string.char(b1, b2, b3, b4)
+				elseif count == 4 then
+					out[#out + 1] = string.char(b1, b2, b3)
+				elseif count == 3 then
+					out[#out + 1] = string.char(b1, b2)
+				elseif count == 2 then
+					out[#out + 1] = string.char(b1)
+				end
+			end
+
+			i = i + count
+		end
+
+		return table.concat(out)
+	end
+
+	return data
+end
+]=], prefix_0, prefix_1, self.base64chars, self.base85chars);
+	end
+
+	if not code then
+		return;
+	end
+
+	local parser = Parser:new({
+		LuaVersion = LuaVersion.Lua51;
+	});
+	local newAst = parser:parse(code);
+	local decodeDecl = newAst.body.statements[1];
+	decodeDecl.body.scope:setParent(self.rootScope);
+
+	self.lazyDecodeId = self.rootScope:addVariable();
+
+	visitast(newAst, nil, function(node, data)
+		if(node.kind == AstKind.LocalFunctionDeclaration) then
+			if(node.scope:getVariableName(node.id) == "DECODE") then
+				data.scope:removeReferenceToHigherScope(node.scope, node.id);
+				node.scope = self.rootScope;
+				node.id = self.lazyDecodeId;
+			end
+		end
+	end);
+
+	table.insert(ast.body.statements, 1, decodeDecl);
+end
+
 function ConstantArray:createBase64Lookup()
 	local entries = {};
 	local i = 0;
@@ -774,7 +1025,11 @@ function ConstantArray:apply(ast, pipeline)
 		end
 	end);
 
-	self:addDecodeCode(ast);
+	if self.LazyDecode then
+		self:createLazyDecodeHelper(ast);
+	else
+		self:addDecodeCode(ast);
+	end
 
 	local steps = util.shuffle({
 		-- Add Wrapper Function Code
@@ -784,6 +1039,8 @@ function ConstantArray:apply(ast, pipeline)
 			funcScope:addReferenceToHigherScope(self.rootScope, self.arrId);
 
 			local arg = funcScope:addVariable();
+			local idx = funcScope:addVariable();
+			local value = funcScope:addVariable();
 			local addSubArg;
 
 			-- Create add and Subtract code
@@ -794,16 +1051,48 @@ function ConstantArray:apply(ast, pipeline)
 			end
 
 			-- Create and Add the Function Declaration
-			table.insert(ast.body.statements, 1, Ast.LocalFunctionDeclaration(self.rootScope, self.wrapperId, {
-				Ast.VariableExpression(funcScope, arg)
-			}, Ast.Block({
-				Ast.ReturnStatement({
+			local statements = {
+				Ast.LocalVariableDeclaration(funcScope, {
+					idx
+				}, {
+					addSubArg
+				}),
+				Ast.LocalVariableDeclaration(funcScope, {
+					value
+				}, {
 					Ast.IndexExpression(
 						Ast.VariableExpression(self.rootScope, self.arrId),
-						addSubArg
+						Ast.VariableExpression(funcScope, idx)
 					)
-				});
-			}, funcScope)));
+				}),
+			};
+
+			if self.LazyDecode and self.Encoding ~= "none" and self.lazyDecodeId then
+				funcScope:addReferenceToHigherScope(self.rootScope, self.lazyDecodeId);
+				table.insert(statements, Ast.AssignmentStatement({
+					Ast.AssignmentVariable(funcScope, value)
+				}, {
+					Ast.FunctionCallExpression(Ast.VariableExpression(self.rootScope, self.lazyDecodeId), {
+						Ast.VariableExpression(funcScope, value),
+					})
+				}));
+				table.insert(statements, Ast.AssignmentStatement({
+					Ast.AssignmentIndexing(
+						Ast.VariableExpression(self.rootScope, self.arrId),
+						Ast.VariableExpression(funcScope, idx)
+					)
+				}, {
+					Ast.VariableExpression(funcScope, value)
+				}));
+			end
+
+			table.insert(statements, Ast.ReturnStatement({
+				Ast.VariableExpression(funcScope, value)
+			}));
+
+			table.insert(ast.body.statements, 1, Ast.LocalFunctionDeclaration(self.rootScope, self.wrapperId, {
+				Ast.VariableExpression(funcScope, arg)
+			}, Ast.Block(statements, funcScope)));
 
 			-- Resulting Code:
 			-- function xy(a)
@@ -830,6 +1119,7 @@ function ConstantArray:apply(ast, pipeline)
 
 	self.rootScope = nil;
 	self.arrId = nil;
+	self.lazyDecodeId = nil;
 
 	self.constants = nil;
 	self.lookup = nil;

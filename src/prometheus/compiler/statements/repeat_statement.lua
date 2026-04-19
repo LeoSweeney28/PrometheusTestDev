@@ -13,7 +13,7 @@ return function(self, statement, funcDepth)
     statement.__start_block = innerBlock;
     statement.__final_block = finalBlock;
 
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.NumberExpression(innerBlock.id)), {self.POS_REGISTER}, {}, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, self:blockIdExpression(scope, innerBlock.id)), {self.POS_REGISTER}, {}, false);
     self:setActiveBlock(innerBlock);
 
     for _, stat in ipairs(statement.body.statements) do
@@ -22,7 +22,7 @@ return function(self, statement, funcDepth)
 
     local scope = self.activeBlock.scope;
     local conditionReg = (self:compileExpression(statement.condition, funcDepth, 1))[1];
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), Ast.NumberExpression(finalBlock.id)), Ast.NumberExpression(innerBlock.id))), { self.POS_REGISTER }, { conditionReg }, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), self:blockIdExpression(scope, finalBlock.id)), self:blockIdExpression(scope, innerBlock.id))), { self.POS_REGISTER }, { conditionReg }, false);
     self:freeRegister(conditionReg, false);
 
     for id, _ in ipairs(statement.body.scope.variables) do

@@ -20,10 +20,10 @@ if not pcall(function()
 end) then
     local oldMathRandom = math.random;
     math.random = function(a, b)
-        if not a and b then
+        if a == nil and b == nil then
             return oldMathRandom();
         end
-        if not b then
+        if b == nil then
             return math.random(1, a);
         end
         if a > b then

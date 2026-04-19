@@ -15,4 +15,8 @@ return {
 	NumbersToExpressions = require("prometheus.steps.NumbersToExpressions"),
 	AddVararg = require("prometheus.steps.AddVararg"),
 	WatermarkCheck = require("prometheus.steps.WatermarkCheck"),
+	OpaquePredicates = require("prometheus.steps.OpaquePredicates"),
+	BooleanExpressionInversion = require("prometheus.steps.BooleanExpressionInversion"),
+	IndirectFunctionCalls = require("prometheus.steps.IndirectFunctionCalls"),
+	FunctionParameterShuffle = require("prometheus.steps.FunctionParameterShuffle"),
 }

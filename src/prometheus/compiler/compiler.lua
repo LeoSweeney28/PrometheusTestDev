@@ -21,7 +21,9 @@ local compileCoreModule = require("prometheus.compiler.compile_core");
 
 local Compiler = {};
 
-function Compiler:new()
+function Compiler:new(options)
+    options = options or {};
+
     local compiler = {
         blocks = {};
         registers = {};
@@ -52,6 +54,25 @@ function Compiler:new()
             AstKind.ModExpression,
             AstKind.PowExpression,
         };
+
+        statementMergePasses = options.statementMergePasses or 4;
+        enableParallelAssignmentMerge = options.enableParallelAssignmentMerge ~= false;
+        shuffleBlocks = options.shuffleBlocks ~= false;
+        enableStatementReorder = options.enableStatementReorder ~= false;
+        enableBuiltinCapture = options.enableBuiltinCapture ~= false;
+        enableHookGuard = options.enableHookGuard ~= false;
+        guardNoisePasses = options.guardNoisePasses or 1;
+        enableAntiTampering = options.enableAntiTampering ~= false;
+        enableBlockIdEncoding = options.enableBlockIdEncoding ~= false;
+        enableControlFlowBytecode = options.enableControlFlowBytecode ~= false;
+        enablePackedControlFlowOperands = options.enablePackedControlFlowOperands ~= false;
+        controlFlowBytecodeNoise = options.controlFlowBytecodeNoise or 1;
+        strictEnvironmentChecks = options.strictEnvironmentChecks ~= false;
+        dispatcherStyle = options.dispatcherStyle or "mixed";
+        equalityDispatchMaxBlocks = options.equalityDispatchMaxBlocks or 16;
+        dispatcherJunkBranches = options.dispatcherJunkBranches or 0;
+        dispatcherJunkProbability = options.dispatcherJunkProbability or 0.6;
+        dispatcherNoiseStatements = options.dispatcherNoiseStatements or 1;
     };
 
     setmetatable(compiler, self);
@@ -81,6 +102,148 @@ function Compiler:popRegisterUsageInfo()
     self.registers = info.registers;
 end
 
+function Compiler:initControlFlowCodec()
+    if self.enableBlockIdEncoding then
+        self.blockIdMultiplier = math.random(257, 8191);
+        self.blockIdAdd = math.random(2^18, 2^24);
+    else
+        self.blockIdMultiplier = 1;
+        self.blockIdAdd = 0;
+    end
+
+    if self.enableControlFlowBytecode then
+        self.blockIdBytecodeOffset = math.random(2^14, 2^20);
+        self.controlFlowPackRadix = math.random(257, 1021);
+        self.controlFlowPackAddA = math.random(2^10, 2^18);
+        self.controlFlowPackAddB = math.random(2^10, 2^18);
+        self.controlFlowPackSwapOperands = math.random() > 0.5;
+        self.controlFlowDescriptorBias = math.random(3, 23);
+        self.controlFlowPackMulA = math.random(3, 19);
+        self.controlFlowPackMulB = math.random(3, 19);
+    else
+        self.blockIdBytecodeOffset = 0;
+        self.controlFlowPackRadix = 1;
+        self.controlFlowPackAddA = 0;
+        self.controlFlowPackAddB = 0;
+        self.controlFlowPackSwapOperands = false;
+        self.controlFlowDescriptorBias = 0;
+        self.controlFlowPackMulA = 1;
+        self.controlFlowPackMulB = 1;
+    end
+end
+
+function Compiler:encodeBlockId(rawId)
+    if self.enableBlockIdEncoding then
+        return (rawId * self.blockIdMultiplier) + self.blockIdAdd;
+    end
+    return rawId;
+end
+
+function Compiler:encodePackedControlFlowEntry(target)
+    local radix = self.controlFlowPackRadix or 257;
+    local addA = self.controlFlowPackAddA or 0;
+    local addB = self.controlFlowPackAddB or 0;
+    local hi = math.floor(target / radix);
+    local lo = target % radix;
+    local descriptor = math.random(1, 3);
+    local opA = hi + addA;
+    local opB = lo + addB;
+    if descriptor == 2 then
+        opA = lo + addA;
+        opB = hi + addB;
+    elseif descriptor == 3 then
+        local mulA = self.controlFlowPackMulA or 1;
+        local mulB = self.controlFlowPackMulB or 1;
+        opA = (hi * mulA) + addA;
+        opB = (lo * mulB) + addB;
+    end
+    return {
+        descriptor + (self.controlFlowDescriptorBias or 0),
+        opA,
+        opB,
+    };
+end
+
+function Compiler:encodeControlFlowEntry(rawId)
+    local target = rawId + (self.blockIdBytecodeOffset or 0);
+    if self.enablePackedControlFlowOperands then
+        return self:encodePackedControlFlowEntry(target);
+    end
+    return target;
+end
+
+function Compiler:createControlFlowBytecodeTableExpression()
+    local entries = {};
+    for i = 1, #self.blockIdValues do
+        local value = self.blockIdValues[i];
+        if type(value) == "table" then
+            entries[i] = Ast.TableEntry(Ast.TableConstructorExpression({
+                Ast.TableEntry(Ast.NumberExpression(value[1]));
+                Ast.TableEntry(Ast.NumberExpression(value[2]));
+                Ast.TableEntry(Ast.NumberExpression(value[3]));
+            }));
+        else
+            entries[i] = Ast.TableEntry(Ast.NumberExpression(value));
+        end
+    end
+    return Ast.TableConstructorExpression(entries);
+end
+
+function Compiler:decodeControlFlowEntryExpression(slotExpr)
+    if self.enablePackedControlFlowOperands then
+        local descExpr = Ast.SubExpression(
+            Ast.IndexExpression(slotExpr, Ast.NumberExpression(1)),
+            Ast.NumberExpression(self.controlFlowDescriptorBias or 0)
+        );
+        local opAExpr = Ast.IndexExpression(slotExpr, Ast.NumberExpression(2));
+        local opBExpr = Ast.IndexExpression(slotExpr, Ast.NumberExpression(3));
+
+        local decodeVariant1 = Ast.AddExpression(
+            Ast.MulExpression(
+                Ast.SubExpression(opAExpr, Ast.NumberExpression(self.controlFlowPackAddA or 0)),
+                Ast.NumberExpression(self.controlFlowPackRadix or 257)
+            ),
+            Ast.SubExpression(opBExpr, Ast.NumberExpression(self.controlFlowPackAddB or 0))
+        );
+        local decodeVariant2 = Ast.AddExpression(
+            Ast.MulExpression(
+                Ast.SubExpression(opBExpr, Ast.NumberExpression(self.controlFlowPackAddB or 0)),
+                Ast.NumberExpression(self.controlFlowPackRadix or 257)
+            ),
+            Ast.SubExpression(opAExpr, Ast.NumberExpression(self.controlFlowPackAddA or 0))
+        );
+        local decodeVariant3 = Ast.AddExpression(
+            Ast.MulExpression(
+                Ast.DivExpression(
+                    Ast.SubExpression(opAExpr, Ast.NumberExpression(self.controlFlowPackAddA or 0)),
+                    Ast.NumberExpression(self.controlFlowPackMulA or 1)
+                ),
+                Ast.NumberExpression(self.controlFlowPackRadix or 257)
+            ),
+            Ast.DivExpression(
+                Ast.SubExpression(opBExpr, Ast.NumberExpression(self.controlFlowPackAddB or 0)),
+                Ast.NumberExpression(self.controlFlowPackMulB or 1)
+            )
+        );
+        local decodedWithOffset = Ast.OrExpression(
+            Ast.AndExpression(
+                Ast.EqualsExpression(descExpr, Ast.NumberExpression(3)),
+                decodeVariant3
+            ),
+            Ast.OrExpression(
+                Ast.AndExpression(
+                    Ast.EqualsExpression(descExpr, Ast.NumberExpression(2)),
+                    decodeVariant2
+                ),
+                decodeVariant1
+            )
+        );
+        return Ast.SubExpression(decodedWithOffset, Ast.NumberExpression(self.blockIdBytecodeOffset or 0));
+    end
+
+    return Ast.SubExpression(slotExpr, Ast.NumberExpression(self.blockIdBytecodeOffset or 0));
+end
+
 function Compiler:compile(ast)
     self.blocks = {};
     self.registers = {};
@@ -94,8 +257,12 @@ function Compiler:compile(ast)
 
     self.upvalVars = {};
     self.registerUsageStack = {};
+    self.blockIdValues = {};
+    self.blockIdSlots = {};
 
     self.upvalsProxyLenReturn = math.random(-2^22, 2^22);
+
+    self:initControlFlowCodec();
 
     local newGlobalScope = Scope:newGlobal();
     local psc = Scope:new(newGlobalScope, nil);
@@ -125,6 +292,7 @@ function Compiler:compile(ast)
     self.setmetatableVar = self.scope:addVariable();
     self.getmetatableVar = self.scope:addVariable();
     self.selectVar = self.scope:addVariable();
+    self.blockIdBytecodeVar = self.scope:addVariable();
 
     local argVar = self.scope:addVariable();
 
@@ -246,6 +414,9 @@ function Compiler:compile(ast)
         }, {
             var = Ast.AssignmentVariable(self.scope, self.freeUpvalueFunc),
             val = self:createFreeUpvalueFunc(),
+        }, {
+            var = Ast.AssignmentVariable(self.scope, self.blockIdBytecodeVar),
+            val = self:createControlFlowBytecodeTableExpression(),
         },
     }
 
@@ -259,6 +430,7 @@ function Compiler:compile(ast)
         Ast.VariableExpression(self.scope, self.upvaluesProxyFunctionVar),
         Ast.VariableExpression(self.scope, self.upvaluesGcFunctionVar),
         Ast.VariableExpression(self.scope, self.freeUpvalueFunc),
+        Ast.VariableExpression(self.scope, self.blockIdBytecodeVar),
     };
     for i, entry in pairs(self.createClosureVars) do
         table.insert(functionNodeAssignments, entry);
@@ -306,7 +478,7 @@ function Compiler:compile(ast)
         Ast.AssignmentStatement(assignmentStatLhs, assignmentStatRhs);
         Ast.ReturnStatement{
             Ast.FunctionCallExpression(Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.createVarargClosureVar), {
-                    Ast.NumberExpression(self.startBlockId);
+                    self:blockIdExpression(self.scope, self.startBlockId);
                     Ast.TableConstructorExpression(upvalEntries);
                 }), {Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.unpackVar), {Ast.VariableExpression(self.scope, argVar)})});
         }

@@ -216,6 +216,18 @@ return function(Compiler)
         return Ast.AssignmentStatement({Ast.AssignmentVariable(self.containerFuncScope, self.posVar)},{to});
     end
 
+    function Compiler:blockIdExpression(scope, id)
+        if self.enableControlFlowBytecode and self.blockIdSlots and self.blockIdSlots[id] and self.blockIdBytecodeVar then
+            scope:addReferenceToHigherScope(self.scope, self.blockIdBytecodeVar);
+            local slotExpr = Ast.IndexExpression(
+                Ast.VariableExpression(self.scope, self.blockIdBytecodeVar),
+                Ast.NumberExpression(self.blockIdSlots[id])
+            );
+            return self:decodeControlFlowEntryExpression(slotExpr);
+        end
+        return Ast.NumberExpression(id);
+    end
+
     function Compiler:setPos(scope, val)
         if not val then
             local v = Ast.IndexExpression(self:env(scope), randomStrings.randomStringNode(math.random(12, 14)));
@@ -223,7 +235,7 @@ return function(Compiler)
             return Ast.AssignmentStatement({Ast.AssignmentVariable(self.containerFuncScope, self.posVar)}, {v});
         end
         scope:addReferenceToHigherScope(self.containerFuncScope, self.posVar);
-        return Ast.AssignmentStatement({Ast.AssignmentVariable(self.containerFuncScope, self.posVar)}, {Ast.NumberExpression(val) or Ast.NilExpression()});
+        return Ast.AssignmentStatement({Ast.AssignmentVariable(self.containerFuncScope, self.posVar)}, {self:blockIdExpression(scope, val) or Ast.NilExpression()});
     end
 
     function Compiler:setReturn(scope, val)

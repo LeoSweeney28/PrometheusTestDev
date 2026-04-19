@@ -31,7 +31,7 @@ function Step:new(settings)
 		elseif(data.type == "enum") then
 			local lookup = lookupify(data.values);
 			if not lookup[settings[key]] then
-				logger:error(string.format("Invalid value for the Setting \"%s\" of the Step \"%s\". It must be one of the following: %s", key, self.Name, table.concat(data, ", ")));
+				logger:error(string.format("Invalid value for the Setting \"%s\" of the Step \"%s\". It must be one of the following: %s", key, self.Name, table.concat(data.values, ", ")));
 			end
 			instance[key] = settings[key];
 		elseif(type(settings[key]) ~= data.type) then
@@ -45,7 +45,7 @@ function Step:new(settings)
 
 			if data.max then
 				if  settings[key] > data.max then
-					logger:error(string.format("Invalid value for the Setting \"%s\" of the Step \"%s\". The biggest allowed value is %d", key, self.Name, data.min));
+					logger:error(string.format("Invalid value for the Setting \"%s\" of the Step \"%s\". The biggest allowed value is %d", key, self.Name, data.max));
 				end
 			end
 
@@ -53,7 +53,7 @@ function Step:new(settings)
 		end
 	end
 
-	instance:init();
+	instance:init(settings);
 
 	return instance;
 end

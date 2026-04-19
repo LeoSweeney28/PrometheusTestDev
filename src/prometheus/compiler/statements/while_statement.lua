@@ -20,7 +20,7 @@ return function(self, statement, funcDepth)
     self:setActiveBlock(checkBlock);
     scope = self.activeBlock.scope;
     local conditionReg = self:compileExpression(statement.condition, funcDepth, 1)[1];
-    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), Ast.NumberExpression(innerBlock.id)), Ast.NumberExpression(finalBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
+    self:addStatement(self:setRegister(scope, self.POS_REGISTER, Ast.OrExpression(Ast.AndExpression(self:register(scope, conditionReg), self:blockIdExpression(scope, innerBlock.id)), self:blockIdExpression(scope, finalBlock.id))), {self.POS_REGISTER}, {conditionReg}, false);
     self:freeRegister(conditionReg, false);
 
     self:setActiveBlock(innerBlock);

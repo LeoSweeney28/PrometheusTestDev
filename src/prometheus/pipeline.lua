@@ -130,16 +130,17 @@ function Pipeline:setLuaVersion(luaVersion)
 	end
 
 	self.parser = Parser:new({
-		luaVersion = luaVersion;
+		LuaVersion = luaVersion;
 	});
 	self.unparser = Unparser:new({
-		luaVersion = luaVersion;
+		LuaVersion = luaVersion;
 	});
+	self.LuaVersion = luaVersion;
 	self.conventions = conventions;
 end
 
 function Pipeline:getLuaVersion()
-	return self.luaVersion;
+	return self.LuaVersion;
 end
 
 function Pipeline:setNameGenerator(nameGenerator)
@@ -164,32 +165,12 @@ function Pipeline:apply(code, filename)
 	if(self.Seed > 0) then
 		math.randomseed(self.Seed);
 	else
-		--> use secure random number generator
-		local success, seed = pcall(function()
-			local seedStr =  io.popen("openssl rand -hex 12"):read("*a"):gsub("\n", "")..""
-			local seedNum = 0;
-
-			--> NOTE: tonumber caps at 1.844674407371e+19. So we use this instead.
-			for i = 1, #seedStr do
-				local char = seedStr:sub(i, i):lower()
-				local digit = char:match("%d") and (char:byte() - 48) or (char:byte() - 87)
-				seedNum = seedNum * 16 + digit
-			end
-
-			--> Random Number Generator in Lua 5.1 is limited to 9.007199254741e+15.
-			if _VERSION == "Lua 5.1" and not jit then
-				seedNum = seedNum % 9.007199254741e+15
-			end
-
-			return seedNum
-		end)
-
-		if success then
-			math.randomseed(seed)
-		else
-			logger:warn("OpenSSL is unavailable. Falling back to unix time.");
-			math.randomseed(os.time())
+		-- Fast cross-platform seed generation without external process spawning.
+		local seed = os.time() + math.floor(os.clock() * 1000000);
+		if _VERSION == "Lua 5.1" and not rawget(_G, "jit") then
+			seed = seed % 2147483647;
 		end
+		math.randomseed(seed);
 	end
 
 	logger:info("Parsing ...");

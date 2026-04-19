@@ -28,7 +28,8 @@ for _, currArg in pairs(arg) do
 	end
 	local iterationValue = currArg:match("^%-%-iterations=(%d+)$")
 	if iterationValue then
-		iterationCount = math.max(tonumber(iterationValue), 1)
+		local parsedIterations = tonumber(iterationValue) or 1
+		iterationCount = math.max(parsedIterations, 1)
 	end
 end
 
@@ -86,12 +87,26 @@ local function shallowcopy(orig)
     return copy
 end
 
+local function clonePresetWithoutAntiTamper(preset)
+	local cloned = shallowcopy(preset)
+	cloned.Steps = {}
+	for _, step in ipairs(preset.Steps or {}) do
+		if step.Name ~= "AntiTamper" then
+			table.insert(cloned.Steps, {
+				Name = step.Name,
+				Settings = shallowcopy(step.Settings or {})
+			})
+		end
+	end
+	return cloned
+end
+
 local function validate(a, b)
 	local outa = "";
 	local outb = "";
 
 	local enva = shallowcopy(getfenv(a));
-	local envb = shallowcopy(getfenv(a));
+	local envb = shallowcopy(getfenv(b));
 
 	enva.print = function(...)
 		for _, v in ipairs({...}) do
@@ -122,18 +137,17 @@ local fc = 0;
 for _, filename in ipairs(scandir(testdir)) do
 	local path = testdir .. filename;
 	local file = io.open(path,"r");
+	if not file then
+		error("Failed to open test file: " .. path)
+	end
 
-	local code = file:read("*a");
+	local code = file:read("*a") or "";
 	print(Prometheus.colors("[CURRENT] ", "magenta") .. filename);
 	for name, preset in pairs(presets) do
-		for i = #preset.Steps, 1, -1 do
-			if preset.Steps[i].Name == "AntiTamper" then
-				table.remove(preset.Steps, i);
-			end
-		end
+		local testPreset = clonePresetWithoutAntiTamper(preset)
 
 		for _ = 1, iterationCount do
-			pipeline = Prometheus.Pipeline:fromConfig(preset);
+			pipeline = Prometheus.Pipeline:fromConfig(testPreset);
 			local obfuscated = pipeline:apply(code);
 
 			local funca = loadstring(code);

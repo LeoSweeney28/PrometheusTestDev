@@ -23,6 +23,8 @@ function EncryptStrings:init(_) end
 
 function EncryptStrings:CreateEncryptionService()
 	local usedSeeds = {};
+	local seedCounter = 0;
+	local seedModulo = 35184372088832;
 
 	local secret_key_6 = math.random(0, 63) -- 6-bit  arbitrary integer (0..63)
 	local secret_key_7 = math.random(0, 127) -- 7-bit  arbitrary integer (0..127)
@@ -54,12 +56,20 @@ function EncryptStrings:CreateEncryptionService()
 	end
 
 	local function gen_seed()
-		local seed;
+		for _ = 1, 1024 do
+			local seed = math.random(0, seedModulo);
+			if not usedSeeds[seed] then
+				usedSeeds[seed] = true;
+				return seed;
+			end
+		end
+
 		repeat
-			seed = math.random(0, 35184372088832);
-		until not usedSeeds[seed];
-		usedSeeds[seed] = true;
-		return seed;
+			seedCounter = (seedCounter + 1) % (seedModulo + 1);
+		until not usedSeeds[seedCounter];
+
+		usedSeeds[seedCounter] = true;
+		return seedCounter;
 	end
 
 	local function get_random_32()
@@ -108,6 +118,7 @@ do
 		"local floor = math.floor",
 		"local random = math.random",
 		"local remove = table.remove",
+		"local concat = table.concat",
 		"local char = string.char",
 		"local state_45 = 0",
 		"local state_8 = 2",
@@ -162,12 +173,12 @@ do
 			local len = #str;
 			realStringsLocal[seed] = "";
 			local prevVal = ]] .. tostring(secret_key_8) .. [[;
-			local s = "";
+			local out = {};
 			for i=1, len, 1 do
 				prevVal = (string.byte(str, i) + get_next_pseudo_random_byte() + prevVal) % 256
-				s = s .. chars[prevVal + 1];
+				out[i] = chars[prevVal + 1];
 			end
-			realStringsLocal[seed] = s;
+			realStringsLocal[seed] = concat(out);
 		end
 		return seed;
 	end
