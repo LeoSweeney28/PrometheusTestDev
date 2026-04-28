@@ -327,7 +327,13 @@ return function(Compiler)
 
         local vmBudgetVar = self.containerFuncScope:addVariable();
         local vmPosTypeVar = self.containerFuncScope:addVariable();
+        local vmPosIsIntVar = self.containerFuncScope:addVariable();
+        local vmValidPosVar = self.containerFuncScope:addVariable();
         local maxVmSteps = math.max(32, (#blocks * 8) + self.maxUsedRegister + 16);
+        local vmValidPosEntries = {};
+        for idx, block in ipairs(blocks) do
+            vmValidPosEntries[idx] = Ast.KeyedTableEntry(Ast.NumberExpression(block.id), Ast.BooleanExpression(true));
+        end
 
         local declarations = {
             self.returnVar,
@@ -347,6 +353,20 @@ return function(Compiler)
 
         table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, util.shuffle(declarations), {}));
         table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, {vmBudgetVar}, {Ast.NumberExpression(maxVmSteps)}));
+        table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, {vmValidPosVar}, {Ast.TableConstructorExpression(vmValidPosEntries)}));
+        table.insert(stats, Ast.FunctionCallStatement(
+            Ast.VariableExpression(self.scope, self.assertVar),
+            {
+                Ast.AndExpression(
+                    Ast.EqualsExpression(Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.typeVar), {Ast.VariableExpression(self.scope, self.unpackVar)}), Ast.StringExpression("function")),
+                    Ast.AndExpression(
+                        Ast.EqualsExpression(Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.typeVar), {Ast.VariableExpression(self.scope, self.typeVar)}), Ast.StringExpression("function")),
+                        Ast.EqualsExpression(Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.typeVar), {Ast.VariableExpression(self.scope, self.assertVar)}), Ast.StringExpression("function"))
+                    )
+                ),
+                Ast.StringExpression("VM bootstrap integrity check failed")
+            }
+        ));
 
         table.insert(stats, Ast.WhileStatement(Ast.Block({
             Ast.AssignmentStatement({
@@ -361,12 +381,41 @@ return function(Compiler)
                     Ast.VariableExpression(self.containerFuncScope, self.posVar),
                 }),
             });
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, vmPosIsIntVar),
+            }, {
+                Ast.AndExpression(
+                    Ast.EqualsExpression(
+                        Ast.ModExpression(Ast.VariableExpression(self.containerFuncScope, self.posVar), Ast.NumberExpression(1)),
+                        Ast.NumberExpression(0)
+                    ),
+                    Ast.EqualsExpression(
+                        Ast.VariableExpression(self.containerFuncScope, self.posVar),
+                        Ast.VariableExpression(self.containerFuncScope, self.posVar)
+                    )
+                ),
+            });
             Ast.FunctionCallStatement(
                 Ast.VariableExpression(self.scope, self.assertVar),
                 {
                     Ast.AndExpression(
-                        Ast.GreaterThanExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(0)),
-                        Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, vmPosTypeVar), Ast.StringExpression("number"))
+                        Ast.AndExpression(
+                            Ast.GreaterThanExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(0)),
+                            Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, vmPosTypeVar), Ast.StringExpression("number"))
+                        ),
+                        Ast.AndExpression(
+                            Ast.AndExpression(
+                                Ast.GreaterThanExpression(Ast.VariableExpression(self.containerFuncScope, self.posVar), Ast.NumberExpression(0)),
+                                Ast.VariableExpression(self.containerFuncScope, vmPosIsIntVar)
+                            ),
+                            Ast.EqualsExpression(
+                                Ast.IndexExpression(
+                                    Ast.VariableExpression(self.containerFuncScope, vmValidPosVar),
+                                    Ast.VariableExpression(self.containerFuncScope, self.posVar)
+                                ),
+                                Ast.BooleanExpression(true)
+                            )
+                        )
                     ),
                     Ast.StringExpression("VM state integrity check failed")
                 }
