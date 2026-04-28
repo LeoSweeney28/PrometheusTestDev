@@ -325,9 +325,7 @@ return function(Compiler)
         self.containerFuncScope:addReferenceToHigherScope(self.scope, self.typeVar);
         self.containerFuncScope:addReferenceToHigherScope(self.scope, self.assertVar);
 
-        local vmBudgetVar = self.containerFuncScope:addVariable();
         local vmPosTypeVar = self.containerFuncScope:addVariable();
-        local maxVmSteps = math.max(32, (#blocks * 8) + self.maxUsedRegister + 16);
 
         local declarations = {
             self.returnVar,
@@ -346,7 +344,6 @@ return function(Compiler)
         end
 
         table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, util.shuffle(declarations), {}));
-        table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, {vmBudgetVar}, {Ast.NumberExpression(maxVmSteps)}));
         table.insert(stats, Ast.FunctionCallStatement(
             Ast.VariableExpression(self.scope, self.assertVar),
             {
@@ -363,11 +360,6 @@ return function(Compiler)
 
         table.insert(stats, Ast.WhileStatement(Ast.Block({
             Ast.AssignmentStatement({
-                Ast.AssignmentVariable(self.containerFuncScope, vmBudgetVar),
-            }, {
-                Ast.SubExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(1)),
-            });
-            Ast.AssignmentStatement({
                 Ast.AssignmentVariable(self.containerFuncScope, vmPosTypeVar),
             }, {
                 Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.typeVar), {
@@ -378,10 +370,7 @@ return function(Compiler)
                 Ast.VariableExpression(self.scope, self.assertVar),
                 {
                     Ast.AndExpression(
-                        Ast.AndExpression(
-                            Ast.GreaterThanExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(0)),
-                            Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, vmPosTypeVar), Ast.StringExpression("number"))
-                        ),
+                        Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, vmPosTypeVar), Ast.StringExpression("number")),
                         Ast.EqualsExpression(
                             Ast.VariableExpression(self.containerFuncScope, self.posVar),
                             Ast.VariableExpression(self.containerFuncScope, self.posVar)
