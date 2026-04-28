@@ -117,6 +117,7 @@ return function(Compiler)
 
     local function mergeAdjacentParallelAssignments(blockstats)
         local merged = {};
+        local changed = false;
         local i = 1;
         while i <= #blockstats do
             local stat = blockstats[i];
@@ -125,11 +126,12 @@ return function(Compiler)
             while i <= #blockstats and canMergeParallelAssignmentStatements(stat, blockstats[i]) do
                 stat = mergeParallelAssignmentStatements(stat, blockstats[i]);
                 i = i + 1;
+                changed = true;
             end
 
             table.insert(merged, stat);
         end
-        return merged;
+        return merged, changed;
     end
 
     function Compiler:emitContainerFuncBody()
@@ -191,9 +193,10 @@ return function(Compiler)
                 end
             end
 
-            local mergedBlockStats = mergeAdjacentParallelAssignments(blockstats);
-            for _=1, 7 do
-                mergedBlockStats = mergeAdjacentParallelAssignments(mergedBlockStats);
+            local mergedBlockStats, changed = mergeAdjacentParallelAssignments(blockstats);
+            -- Continue collapsing only while there is progress to avoid redundant passes.
+            while changed do
+                mergedBlockStats, changed = mergeAdjacentParallelAssignments(mergedBlockStats);
             end
 
             blockstats = {};
@@ -319,6 +322,12 @@ return function(Compiler)
         self.whileScope:addReferenceToHigherScope(self.containerFuncScope, self.posVar);
 
         self.containerFuncScope:addReferenceToHigherScope(self.scope, self.unpackVar);
+        self.containerFuncScope:addReferenceToHigherScope(self.scope, self.typeVar);
+        self.containerFuncScope:addReferenceToHigherScope(self.scope, self.assertVar);
+
+        local vmBudgetVar = self.containerFuncScope:addVariable();
+        local vmPosTypeVar = self.containerFuncScope:addVariable();
+        local maxVmSteps = math.max(32, (#blocks * 8) + self.maxUsedRegister + 16);
 
         local declarations = {
             self.returnVar,
@@ -337,8 +346,33 @@ return function(Compiler)
         end
 
         table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, util.shuffle(declarations), {}));
+        table.insert(stats, Ast.LocalVariableDeclaration(self.containerFuncScope, {vmBudgetVar}, {Ast.NumberExpression(maxVmSteps)}));
 
-        table.insert(stats, Ast.WhileStatement(whileBody, Ast.VariableExpression(self.containerFuncScope, self.posVar)));
+        table.insert(stats, Ast.WhileStatement(Ast.Block({
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, vmBudgetVar),
+            }, {
+                Ast.SubExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(1)),
+            });
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, vmPosTypeVar),
+            }, {
+                Ast.FunctionCallExpression(Ast.VariableExpression(self.scope, self.typeVar), {
+                    Ast.VariableExpression(self.containerFuncScope, self.posVar),
+                }),
+            });
+            Ast.FunctionCallStatement(
+                Ast.VariableExpression(self.scope, self.assertVar),
+                {
+                    Ast.AndExpression(
+                        Ast.GreaterThanExpression(Ast.VariableExpression(self.containerFuncScope, vmBudgetVar), Ast.NumberExpression(0)),
+                        Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, vmPosTypeVar), Ast.StringExpression("number"))
+                    ),
+                    Ast.StringExpression("VM state integrity check failed")
+                }
+            );
+            Ast.DoStatement(whileBody);
+        }, whileBody.scope), Ast.VariableExpression(self.containerFuncScope, self.posVar)));
 
 
         table.insert(stats, Ast.AssignmentStatement({

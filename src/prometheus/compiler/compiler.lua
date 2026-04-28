@@ -108,6 +108,8 @@ function Compiler:compile(ast)
     local _, setmetatableVar = newGlobalScope:resolve("setmetatable");
     local _, getmetatableVar = newGlobalScope:resolve("getmetatable");
     local _, selectVar = newGlobalScope:resolve("select");
+    local _, typeVar = newGlobalScope:resolve("type");
+    local _, assertVar = newGlobalScope:resolve("assert");
 
     psc:addReferenceToHigherScope(newGlobalScope, getfenvVar, 2);
     psc:addReferenceToHigherScope(newGlobalScope, tableVar);
@@ -116,6 +118,8 @@ function Compiler:compile(ast)
     psc:addReferenceToHigherScope(newGlobalScope, newproxyVar);
     psc:addReferenceToHigherScope(newGlobalScope, setmetatableVar);
     psc:addReferenceToHigherScope(newGlobalScope, getmetatableVar);
+    psc:addReferenceToHigherScope(newGlobalScope, typeVar);
+    psc:addReferenceToHigherScope(newGlobalScope, assertVar);
 
     self.scope = Scope:new(psc);
     self.envVar = self.scope:addVariable();
@@ -125,6 +129,8 @@ function Compiler:compile(ast)
     self.setmetatableVar = self.scope:addVariable();
     self.getmetatableVar = self.scope:addVariable();
     self.selectVar = self.scope:addVariable();
+    self.typeVar = self.scope:addVariable();
+    self.assertVar = self.scope:addVariable();
 
     local argVar = self.scope:addVariable();
 
@@ -274,7 +280,7 @@ function Compiler:compile(ast)
 
 
     -- NEW: Position Shuffler
-    local ids = util.shuffle({1, 2, 3, 4, 5, 6, 7});
+    local ids = util.shuffle({1, 2, 3, 4, 5, 6, 7, 8, 9});
 
     local items = {
         Ast.VariableExpression(self.scope, self.envVar),
@@ -283,6 +289,8 @@ function Compiler:compile(ast)
         Ast.VariableExpression(self.scope, self.setmetatableVar),
         Ast.VariableExpression(self.scope, self.getmetatableVar),
         Ast.VariableExpression(self.scope, self.selectVar),
+        Ast.VariableExpression(self.scope, self.typeVar),
+        Ast.VariableExpression(self.scope, self.assertVar),
         Ast.VariableExpression(self.scope, argVar),
     }
 
@@ -293,6 +301,8 @@ function Compiler:compile(ast)
         Ast.VariableExpression(newGlobalScope, setmetatableVar);
         Ast.VariableExpression(newGlobalScope, getmetatableVar);
         Ast.VariableExpression(newGlobalScope, selectVar);
+        Ast.VariableExpression(newGlobalScope, typeVar);
+        Ast.VariableExpression(newGlobalScope, assertVar);
         Ast.TableConstructorExpression({
             Ast.TableEntry(Ast.VarargExpression());
         })
@@ -300,7 +310,7 @@ function Compiler:compile(ast)
 
     local functionNode = Ast.FunctionLiteralExpression({
       items[ids[1]], items[ids[2]], items[ids[3]], items[ids[4]],
-      items[ids[5]], items[ids[6]], items[ids[7]],
+      items[ids[5]], items[ids[6]], items[ids[7]], items[ids[8]], items[ids[9]],
       unpack(util.shuffle(tbl))
     }, Ast.Block({
         Ast.AssignmentStatement(assignmentStatLhs, assignmentStatRhs);
@@ -315,7 +325,7 @@ function Compiler:compile(ast)
     return Ast.TopNode(Ast.Block({
         Ast.ReturnStatement{Ast.FunctionCallExpression(functionNode, {
             astItems[ids[1]], astItems[ids[2]], astItems[ids[3]], astItems[ids[4]],
-            astItems[ids[5]], astItems[ids[6]], astItems[ids[7]],
+            astItems[ids[5]], astItems[ids[6]], astItems[ids[7]], astItems[ids[8]], astItems[ids[9]],
         })};
     }, psc), newGlobalScope);
 end
