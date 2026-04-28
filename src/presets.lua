@@ -66,17 +66,6 @@ return {
 				},
 			},
 			{ Name = "Vmify", Settings = {} },
-			{
-				Name = "ConstantArray",
-				Settings = {
-					Threshold = 1,
-					StringsOnly = true,
-					Shuffle = true,
-					Rotate = true,
-					LocalWrapperThreshold = 0,
-				},
-			},
-			{ Name = "NumbersToExpressions", Settings = {} },
 			{ Name = "WrapInFunction", Settings = {} },
 		},
 	},
@@ -98,22 +87,6 @@ return {
 				},
 			},
 			{ Name = "Vmify", Settings = {} },
-			{
-				Name = "ConstantArray",
-				Settings = {
-					Threshold = 1,
-					StringsOnly = true,
-					Shuffle = true,
-					Rotate = true,
-					LocalWrapperThreshold = 0
-				},
-			},
-			{
-				Name = "NumbersToExpressions",
-				Settings = {
-					NumberRepresentationMutaton = true
-				},
-			},
 			{ Name = "WrapInFunction", Settings = {} },
 		},
 	},

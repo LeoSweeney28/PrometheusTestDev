@@ -211,108 +211,49 @@ return function(Compiler)
 
         table.sort(blocks, function(a, b) return a.id < b.id end);
 
-        -- Build a strict threshold condition between adjacent block IDs.
-        -- Using a midpoint avoids exact-id comparisons while preserving dispatch.
-        local function buildBlockThresholdCondition(scope, leftId, rightId, useAndOr)
-            local bound = math.floor((leftId + rightId) / 2);
-            local posExpr = self:pos(scope);
-            local boundExpr = Ast.NumberExpression(bound);
-
-            if useAndOr then
-                -- Kept for compatibility with caller variations.
-                return Ast.LessThanExpression(posExpr, boundExpr);
-            else
-                local variant = math.random(1, 2);
-                if variant == 1 then
-                    return Ast.LessThanExpression(posExpr, boundExpr);
-                else
-                    return Ast.GreaterThanExpression(boundExpr, posExpr);
-                end
-            end
-        end
-
-        -- Build an elseif chain for a range of blocks
-        local function buildElseifChain(tb, l, r, pScope)
-            -- Handle invalid range by returning an empty block
-            if r < l then
-                local emptyScope = Scope:new(pScope);
-                return Ast.Block({}, emptyScope);
-            end
-
-            local len = r - l + 1;
-
-            -- For single block
-            if len == 1 then
-                tb[l].block.scope:setParent(pScope);
-                return tb[l].block;
-            end
-
-            -- For small ranges, use elseif chain
-            if len <= 4 then
-                local ifScope = Scope:new(pScope);
-                local elseifs = {};
-
-                -- First block uses the first midpoint threshold
-                tb[l].block.scope:setParent(ifScope);
-                local firstCondition = buildBlockThresholdCondition(ifScope, tb[l].id, tb[l + 1].id, false);
-                local firstBlock = tb[l].block;
-
-                -- Middle blocks use their upper midpoint threshold
-                for i = l + 1, r - 1 do
-                    tb[i].block.scope:setParent(ifScope);
-                    local condition = buildBlockThresholdCondition(ifScope, tb[i].id, tb[i + 1].id, false);
-                    table.insert(elseifs, {
-                        condition = condition,
-                        body = tb[i].block
-                    });
-                end
-
-                -- Last block becomes else
-                tb[r].block.scope:setParent(ifScope);
-                local elseBlock = tb[r].block;
-
-                return Ast.Block({
-                    Ast.IfStatement(firstCondition, firstBlock, elseifs, elseBlock);
-                }, ifScope);
-            end
-
-            -- For larger ranges, use binary split with and/or chaining
-            local mid = l + math.ceil(len / 2);
-            local leftMaxId = tb[mid - 1].id;
-            local rightMinId = tb[mid].id;
-            -- Float-safe split: any bound strictly between adjacent IDs works.
-            -- Midpoint avoids integer-only math.random(min, max) behavior.
-            local bound = math.floor((leftMaxId + rightMinId) / 2);
+        -- Build a direct dispatch chain keyed by exact block IDs.
+        -- This avoids threshold-based splits and makes the VM flow less predictable.
+        local function buildDispatchChain(tb, pScope)
             local ifScope = Scope:new(pScope);
-
-            local lBlock = buildElseifChain(tb, l, mid - 1, ifScope);
-            local rBlock = buildElseifChain(tb, mid, r, ifScope);
-
-            -- Randomly choose between different condition styles
-            local condStyle = math.random(1, 3);
-            local condition;
-            local trueBlock, falseBlock;
-
-            if condStyle == 1 then
-                -- pos < bound
-                condition = Ast.LessThanExpression(self:pos(ifScope), Ast.NumberExpression(bound));
-                trueBlock, falseBlock = lBlock, rBlock;
-            elseif condStyle == 2 then
-                -- bound > pos
-                condition = Ast.GreaterThanExpression(Ast.NumberExpression(bound), self:pos(ifScope));
-                trueBlock, falseBlock = lBlock, rBlock;
-            else
-                -- Equivalent split using strict > with branches reversed.
-                condition = Ast.GreaterThanExpression(self:pos(ifScope), Ast.NumberExpression(bound));
-                trueBlock, falseBlock = rBlock, lBlock;
+            local shuffled = {};
+            for i, block in ipairs(tb) do
+                shuffled[i] = block;
             end
+            util.shuffle(shuffled);
+
+            local first = shuffled[1];
+            first.block.scope:setParent(ifScope);
+
+            local elseifs = {};
+            for i = 2, #shuffled do
+                local block = shuffled[i];
+                block.block.scope:setParent(ifScope);
+                elseifs[#elseifs + 1] = {
+                    condition = Ast.EqualsExpression(self:pos(ifScope), Ast.NumberExpression(block.id)),
+                    body = block.block,
+                };
+            end
+
+            local failScope = Scope:new(ifScope);
+            failScope:addReferenceToHigherScope(self.scope, self.assertVar);
+            local elseBlock = Ast.Block({
+                Ast.FunctionCallStatement(
+                    Ast.VariableExpression(self.scope, self.assertVar),
+                    { Ast.BooleanExpression(false), Ast.StringExpression("VM dispatch lookup failed") }
+                );
+            }, failScope);
 
             return Ast.Block({
-                Ast.IfStatement(condition, trueBlock, {}, falseBlock);
+                Ast.IfStatement(
+                    Ast.EqualsExpression(self:pos(ifScope), Ast.NumberExpression(first.id)),
+                    first.block,
+                    elseifs,
+                    elseBlock
+                );
             }, ifScope);
         end
 
-        local whileBody = buildElseifChain(blocks, 1, #blocks, self.containerFuncScope);
+        local whileBody = buildDispatchChain(blocks, self.containerFuncScope);
         if self.whileScope then
             -- Ensure whileScope is properly connected
             self.whileScope:setParent(self.containerFuncScope);
