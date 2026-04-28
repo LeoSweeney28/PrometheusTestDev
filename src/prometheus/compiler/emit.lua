@@ -211,49 +211,108 @@ return function(Compiler)
 
         table.sort(blocks, function(a, b) return a.id < b.id end);
 
-        -- Build a direct dispatch chain keyed by exact block IDs.
-        -- This avoids threshold-based splits and makes the VM flow less predictable.
-        local function buildDispatchChain(tb, pScope)
-            local ifScope = Scope:new(pScope);
+        local function buildDirectIdChain(list, parentScope)
+            local chainScope = Scope:new(parentScope);
+            if #list == 0 then
+                local emptyFailScope = Scope:new(chainScope);
+                emptyFailScope:addReferenceToHigherScope(self.scope, self.assertVar);
+                return Ast.Block({
+                    Ast.FunctionCallStatement(
+                        Ast.VariableExpression(self.scope, self.assertVar),
+                        { Ast.BooleanExpression(false), Ast.StringExpression("VM bucket dispatch failed") }
+                    );
+                }, emptyFailScope);
+            end
+
             local shuffled = {};
-            for i, block in ipairs(tb) do
+            for i, block in ipairs(list) do
                 shuffled[i] = block;
             end
             util.shuffle(shuffled);
 
             local first = shuffled[1];
-            first.block.scope:setParent(ifScope);
+            first.block.scope:setParent(chainScope);
 
             local elseifs = {};
             for i = 2, #shuffled do
                 local block = shuffled[i];
-                block.block.scope:setParent(ifScope);
+                block.block.scope:setParent(chainScope);
                 elseifs[#elseifs + 1] = {
-                    condition = Ast.EqualsExpression(self:pos(ifScope), Ast.NumberExpression(block.id)),
-                    body = block.block,
+                    condition = Ast.EqualsExpression(self:pos(chainScope), Ast.NumberExpression(block.id)),
+                    body = block.block
                 };
             end
 
-            local failScope = Scope:new(ifScope);
-            failScope:addReferenceToHigherScope(self.scope, self.assertVar);
+            local missScope = Scope:new(chainScope);
+            missScope:addReferenceToHigherScope(self.scope, self.assertVar);
             local elseBlock = Ast.Block({
                 Ast.FunctionCallStatement(
                     Ast.VariableExpression(self.scope, self.assertVar),
                     { Ast.BooleanExpression(false), Ast.StringExpression("VM dispatch lookup failed") }
                 );
-            }, failScope);
+            }, missScope);
 
             return Ast.Block({
                 Ast.IfStatement(
-                    Ast.EqualsExpression(self:pos(ifScope), Ast.NumberExpression(first.id)),
+                    Ast.EqualsExpression(self:pos(chainScope), Ast.NumberExpression(first.id)),
                     first.block,
                     elseifs,
                     elseBlock
                 );
-            }, ifScope);
+            }, chainScope);
         end
 
-        local whileBody = buildDispatchChain(blocks, self.containerFuncScope);
+        -- Build a bucketed dispatcher so control flow is not a single flat chain.
+        local function buildBucketedDispatcher(tb, pScope, bucketVar, bucketCount, salt)
+            local bucketScope = Scope:new(pScope);
+            bucketScope:addReferenceToHigherScope(self.containerFuncScope, bucketVar);
+            local buckets = {};
+            for i = 1, bucketCount do
+                buckets[i] = {};
+            end
+
+            for _, block in ipairs(tb) do
+                local b = ((block.id + salt) % bucketCount) + 1;
+                table.insert(buckets[b], block);
+            end
+
+            local firstBucketBody = buildDirectIdChain(buckets[1], bucketScope);
+            local elseifs = {};
+            for i = 2, bucketCount do
+                elseifs[#elseifs + 1] = {
+                    condition = Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, bucketVar), Ast.NumberExpression(i)),
+                    body = buildDirectIdChain(buckets[i], bucketScope),
+                };
+            end
+
+            local failScope = Scope:new(bucketScope);
+            failScope:addReferenceToHigherScope(self.scope, self.assertVar);
+            local elseBlock = Ast.Block({
+                Ast.FunctionCallStatement(
+                    Ast.VariableExpression(self.scope, self.assertVar),
+                    { Ast.BooleanExpression(false), Ast.StringExpression("VM bucket selector failed") }
+                );
+            }, failScope);
+
+            return Ast.Block({
+                Ast.IfStatement(
+                    Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, bucketVar), Ast.NumberExpression(1)),
+                    firstBucketBody,
+                    elseifs,
+                    elseBlock
+                );
+            }, bucketScope);
+        end
+
+        local bucketCount = math.max(3, math.min(11, math.floor(math.sqrt(#blocks)) + 1));
+        local bucketSalt = math.random(7, 97);
+        local altBucketCount = math.max(3, math.min(13, bucketCount + 2));
+        local altBucketSalt = math.random(101, 211);
+        local bucketVar = self.containerFuncScope:addVariable();
+        local altBucketVar = self.containerFuncScope:addVariable();
+        local dispatchModeVar = self.containerFuncScope:addVariable();
+        local primaryWhileBody = buildBucketedDispatcher(blocks, self.containerFuncScope, bucketVar, bucketCount, bucketSalt);
+        local alternateWhileBody = buildBucketedDispatcher(blocks, self.containerFuncScope, altBucketVar, altBucketCount, altBucketSalt);
         if self.whileScope then
             -- Ensure whileScope is properly connected
             self.whileScope:setParent(self.containerFuncScope);
@@ -270,6 +329,9 @@ return function(Compiler)
 
         local declarations = {
             self.returnVar,
+            bucketVar,
+            altBucketVar,
+            dispatchModeVar,
         }
 
         for i, var in pairs(self.registerVars) do
@@ -320,8 +382,55 @@ return function(Compiler)
                     Ast.StringExpression("VM state integrity check failed")
                 }
             );
-            Ast.DoStatement(whileBody);
-        }, whileBody.scope), Ast.VariableExpression(self.containerFuncScope, self.posVar)));
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, bucketVar),
+            }, {
+                Ast.AddExpression(
+                    Ast.ModExpression(
+                        Ast.AddExpression(
+                            Ast.VariableExpression(self.containerFuncScope, self.posVar),
+                            Ast.NumberExpression(bucketSalt)
+                        ),
+                        Ast.NumberExpression(bucketCount)
+                    ),
+                    Ast.NumberExpression(1)
+                )
+            });
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, altBucketVar),
+            }, {
+                Ast.AddExpression(
+                    Ast.ModExpression(
+                        Ast.AddExpression(
+                            Ast.VariableExpression(self.containerFuncScope, self.posVar),
+                            Ast.NumberExpression(altBucketSalt)
+                        ),
+                        Ast.NumberExpression(altBucketCount)
+                    ),
+                    Ast.NumberExpression(1)
+                )
+            });
+            Ast.AssignmentStatement({
+                Ast.AssignmentVariable(self.containerFuncScope, dispatchModeVar),
+            }, {
+                Ast.AddExpression(
+                    Ast.ModExpression(
+                        Ast.AddExpression(
+                            Ast.VariableExpression(self.containerFuncScope, self.posVar),
+                            Ast.NumberExpression(bucketSalt + altBucketSalt)
+                        ),
+                        Ast.NumberExpression(2)
+                    ),
+                    Ast.NumberExpression(1)
+                )
+            });
+            Ast.IfStatement(
+                Ast.EqualsExpression(Ast.VariableExpression(self.containerFuncScope, dispatchModeVar), Ast.NumberExpression(1)),
+                Ast.Block({ Ast.DoStatement(primaryWhileBody); }, Scope:new(self.containerFuncScope)),
+                {},
+                Ast.Block({ Ast.DoStatement(alternateWhileBody); }, Scope:new(self.containerFuncScope))
+            );
+        }, self.containerFuncScope), Ast.VariableExpression(self.containerFuncScope, self.posVar)));
 
 
         table.insert(stats, Ast.AssignmentStatement({
