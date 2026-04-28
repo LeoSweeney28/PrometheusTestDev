@@ -104,13 +104,6 @@ local function initPrefixes()
 	until prefix_0 ~= prefix_1
 end
 
-local function callNameGenerator(generatorFunction, ...)
-	if(type(generatorFunction) == "table") then
-		generatorFunction = generatorFunction.generateName;
-	end
-	return generatorFunction(...);
-end
-
 function ConstantArray:init(_) end
 
 function ConstantArray:createArray()
@@ -142,7 +135,7 @@ function ConstantArray:indexing(index, data)
 		data.scope:addReferenceToHigherScope(wrappers.scope, wrappers.id);
 		return Ast.FunctionCallExpression(Ast.IndexExpression(
 			Ast.VariableExpression(wrappers.scope, wrappers.id),
-			Ast.StringExpression(wrapper.index)
+			Ast.NumberExpression(wrapper.index)
 		), args);
 	else
 		data.scope:addReferenceToHigherScope(self.rootScope, self.wrapperId);
@@ -680,20 +673,13 @@ function ConstantArray:apply(ast, pipeline)
 				id = id;
 				scope = node.scope,
 			};
-			local nameLookup = {};
 			for i = 1, self.LocalWrapperCount, 1 do
-				local name;
-				repeat
-					name = callNameGenerator(pipeline.namegenerator, math.random(1, self.LocalWrapperArgCount * 16));
-				until not nameLookup[name];
-				nameLookup[name] = true;
-
 				local offset = math.random(-self.MaxWrapperOffset, self.MaxWrapperOffset);
 				local argPos = math.random(1, self.LocalWrapperArgCount);
 
 				data.functionData.local_wrappers[i] = {
 					arg = argPos,
-					index = name,
+					index = i,
 					offset =  offset,
 				};
 				data.functionData.__used = false;
@@ -724,7 +710,6 @@ function ConstantArray:apply(ast, pipeline)
 				local wrapper = wrappers[i];
 				local argPos = wrapper.arg;
 				local offset = wrapper.offset;
-				local name = wrapper.index;
 
 				local funcScope = Scope:new(node.scope);
 
@@ -758,7 +743,7 @@ function ConstantArray:apply(ast, pipeline)
 				end
 
 				elems[i] = Ast.KeyedTableEntry(
-					Ast.StringExpression(name),
+					Ast.NumberExpression(wrapper.index),
 					Ast.FunctionLiteralExpression(fargs, Ast.Block({
 						Ast.ReturnStatement({
 							callArg
